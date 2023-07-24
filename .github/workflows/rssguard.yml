@@ -2,9 +2,10 @@
 name: rssguard
 
 on:
-  push:
-    branches: ["*"]
-    tags: ["*"]
+  workflow_dispatch:
+#  push:
+#    branches: ["*"]
+#    tags: ["*"]
 
 jobs:
   check-build-script:
