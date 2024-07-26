@@ -8,14 +8,16 @@
 #include <QDateTime>
 #include <QFontMetrics>
 
-class TextFactory {
+class RSSGUARD_DLLSPEC TextFactory {
   private:
     // Constructors and destructors.
     TextFactory();
 
   public:
-    static QString extractUsernameFromEmail(const QString& email_address);
     static QColor generateColorFromText(const QString& text);
+    static QColor generateRandomColor();
+
+    static QString extractUsernameFromEmail(const QString& email_address);
     static int stringHeight(const QString& string, const QFontMetrics& metrics);
     static int stringWidth(const QString& string, const QFontMetrics& metrics);
 
@@ -24,17 +26,17 @@ class TextFactory {
     // Tries to parse input textual date/time representation.
     // Returns invalid date/time if processing fails.
     // NOTE: This method tries to always return time in UTC.
-    static QDateTime parseDateTime(const QString& date_time);
+    static QDateTime parseDateTime(const QString& date_time, QString* used_dt_format = nullptr);
 
     // Converts 1970-epoch miliseconds to date/time.
     // NOTE: This method tries to always return time in UTC.
     static QDateTime parseDateTime(qint64 milis_from_epoch);
-    static QStringList dateTimePatterns();
+    static QStringList dateTimePatterns(bool with_tzs);
     static QString encrypt(const QString& text, quint64 key = 0);
     static QString decrypt(const QString& text, quint64 key = 0);
     static QString newline();
     static QString capitalizeFirstLetter(const QString& sts);
-    static QStringList tokenizeProcessArguments(QStringView args);
+    static QStringList tokenizeProcessArguments(const QString& command);
 
     // Shortens input string according to given length limit.
     static QString shorten(const QString& input, int text_length_limit = TEXT_TITLE_LIMIT);

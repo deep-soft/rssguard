@@ -5,14 +5,14 @@
 #include "core/messagesmodel.h"
 #include "core/messagesmodelcache.h"
 #include "definitions/globals.h"
-#include "miscellaneous/application.h"
 #include "miscellaneous/regexfactory.h"
-#include "miscellaneous/settings.h"
+#include "miscellaneous/textfactory.h"
 
 #include <QTimer>
 
 MessagesProxyModel::MessagesProxyModel(MessagesModel* source_model, QObject* parent)
-  : QSortFilterProxyModel(parent), m_sourceModel(source_model), m_filter(MessageListFilter::NoFiltering) {
+  : QSortFilterProxyModel(parent), m_sourceModel(source_model), m_filter(MessageListFilter::NoFiltering),
+    m_additionalArticleId(0) {
   setObjectName(QSL("MessagesProxyModel"));
 
   initializeFilters();
@@ -32,74 +32,101 @@ MessagesProxyModel::~MessagesProxyModel() {
 }
 
 void MessagesProxyModel::initializeFilters() {
-  m_filters[MessageListFilter::ShowUnread] = [](const Message& msg) {
-    return !msg.m_isRead;
+  m_filters[MessageListFilter::ShowUnread] = [this](int msg_row_index) {
+    return !m_sourceModel->data(msg_row_index, MSG_DB_READ_INDEX, Qt::ItemDataRole::EditRole).toBool();
   };
 
-  m_filters[MessageListFilter::ShowImportant] = [](const Message& msg) {
-    return msg.m_isImportant;
+  m_filters[MessageListFilter::ShowImportant] = [this](int msg_row_index) {
+    return m_sourceModel->data(msg_row_index, MSG_DB_IMPORTANT_INDEX, Qt::ItemDataRole::EditRole).toBool();
   };
 
-  m_filters[MessageListFilter::ShowToday] = [](const Message& msg) {
+  m_filters[MessageListFilter::ShowToday] = [this](int msg_row_index) {
     const QDateTime current_dt = QDateTime::currentDateTime();
     const QDate current_d = current_dt.date();
+    const QDateTime msg_created =
+      TextFactory::parseDateTime(m_sourceModel->data(msg_row_index, MSG_DB_DCREATED_INDEX, Qt::ItemDataRole::EditRole)
+                                   .value<qint64>());
 
-    return current_d.startOfDay() <= msg.m_created && msg.m_created <= current_d.endOfDay();
+    return current_d.startOfDay() <= msg_created && msg_created <= current_d.endOfDay();
   };
 
-  m_filters[MessageListFilter::ShowYesterday] = [](const Message& msg) {
+  m_filters[MessageListFilter::ShowYesterday] = [this](int msg_row_index) {
     const QDateTime current_dt = QDateTime::currentDateTime();
     const QDate current_d = current_dt.date();
+    const QDateTime msg_created =
+      TextFactory::parseDateTime(m_sourceModel->data(msg_row_index, MSG_DB_DCREATED_INDEX, Qt::ItemDataRole::EditRole)
+                                   .value<qint64>());
 
-    return current_d.addDays(-1).startOfDay() <= msg.m_created && msg.m_created <= current_d.addDays(-1).endOfDay();
+    return current_d.addDays(-1).startOfDay() <= msg_created && msg_created <= current_d.addDays(-1).endOfDay();
   };
 
-  m_filters[MessageListFilter::ShowLast24Hours] = [](const Message& msg) {
+  m_filters[MessageListFilter::ShowLast24Hours] = [this](int msg_row_index) {
     const QDateTime current_dt = QDateTime::currentDateTime();
+    const QDateTime msg_created =
+      TextFactory::parseDateTime(m_sourceModel->data(msg_row_index, MSG_DB_DCREATED_INDEX, Qt::ItemDataRole::EditRole)
+                                   .value<qint64>());
 
-    return current_dt.addSecs(-24 * 60 * 60) <= msg.m_created && msg.m_created <= current_dt;
+    return current_dt.addSecs(-24 * 60 * 60) <= msg_created && msg_created <= current_dt;
   };
 
-  m_filters[MessageListFilter::ShowLast48Hours] = [](const Message& msg) {
+  m_filters[MessageListFilter::ShowLast48Hours] = [this](int msg_row_index) {
     const QDateTime current_dt = QDateTime::currentDateTime();
+    const QDateTime msg_created =
+      TextFactory::parseDateTime(m_sourceModel->data(msg_row_index, MSG_DB_DCREATED_INDEX, Qt::ItemDataRole::EditRole)
+                                   .value<qint64>());
 
-    return current_dt.addSecs(-48 * 60 * 60) <= msg.m_created && msg.m_created <= current_dt;
+    return current_dt.addSecs(-48 * 60 * 60) <= msg_created && msg_created <= current_dt;
   };
 
-  m_filters[MessageListFilter::ShowThisWeek] = [](const Message& msg) {
+  m_filters[MessageListFilter::ShowThisWeek] = [this](int msg_row_index) {
     const QDateTime current_dt = QDateTime::currentDateTime();
     const QDate current_d = current_dt.date();
+    const QDateTime msg_created =
+      TextFactory::parseDateTime(m_sourceModel->data(msg_row_index, MSG_DB_DCREATED_INDEX, Qt::ItemDataRole::EditRole)
+                                   .value<qint64>());
 
-    return current_d.year() == msg.m_created.date().year() &&
-           current_d.weekNumber() == msg.m_created.date().weekNumber();
+    return current_d.year() == msg_created.date().year() && current_d.weekNumber() == msg_created.date().weekNumber();
   };
 
-  m_filters[MessageListFilter::ShowLastWeek] = [](const Message& msg) {
+  m_filters[MessageListFilter::ShowLastWeek] = [this](int msg_row_index) {
     const QDateTime current_dt = QDateTime::currentDateTime();
     const QDate current_d = current_dt.date();
+    const QDateTime msg_created =
+      TextFactory::parseDateTime(m_sourceModel->data(msg_row_index, MSG_DB_DCREATED_INDEX, Qt::ItemDataRole::EditRole)
+                                   .value<qint64>());
 
-    return current_d.addDays(-7).year() == msg.m_created.date().year() &&
-           current_d.addDays(-7).weekNumber() == msg.m_created.date().weekNumber();
+    return current_d.addDays(-7).year() == msg_created.date().year() &&
+           current_d.addDays(-7).weekNumber() == msg_created.date().weekNumber();
   };
 
-  m_filters[MessageListFilter::ShowOnlyWithAttachments] = [](const Message& msg) {
-    return msg.m_enclosures.size() > 0;
+  m_filters[MessageListFilter::ShowOnlyWithAttachments] = [this](int msg_row_index) {
+    const bool msg_has_enclosures =
+      m_sourceModel->data(msg_row_index, MSG_DB_HAS_ENCLOSURES, Qt::ItemDataRole::EditRole).toBool();
+
+    return msg_has_enclosures;
   };
 
-  m_filters[MessageListFilter::ShowOnlyWithScore] = [](const Message& msg) {
-    return msg.m_score > MSG_SCORE_MIN;
+  m_filters[MessageListFilter::ShowOnlyWithScore] = [this](int msg_row_index) {
+    const int msg_score = m_sourceModel->data(msg_row_index, MSG_DB_SCORE_INDEX, Qt::ItemDataRole::EditRole).toDouble();
+
+    return msg_score > MSG_SCORE_MIN;
   };
 
   m_filterKeys = m_filters.keys();
 }
 
-bool MessagesProxyModel::filterAcceptsMessage(const Message& msg) const {
+bool MessagesProxyModel::filterAcceptsMessage(int msg_row_index) const {
   if (m_filter == MessageListFilter::NoFiltering) {
+    return true;
+  }
+  else if (m_additionalArticleId > 0 &&
+           m_sourceModel->data(msg_row_index, MSG_DB_ID_INDEX, Qt::ItemDataRole::EditRole).toInt() ==
+             m_additionalArticleId) {
     return true;
   }
 
   for (MessageListFilter val : m_filterKeys) {
-    if (Globals::hasFlag(m_filter, val) && m_filters[val](msg)) {
+    if (Globals::hasFlag(m_filter, val) && m_filters[val](msg_row_index)) {
       return true;
     }
   }
@@ -107,7 +134,7 @@ bool MessagesProxyModel::filterAcceptsMessage(const Message& msg) const {
   return false;
 }
 
-QModelIndex MessagesProxyModel::getNextPreviousImportantItemIndex(int default_row) {
+QModelIndex MessagesProxyModel::getNextPreviousImportantItemIndex(int default_row) const {
   const bool started_from_zero = default_row == 0;
   QModelIndex next_index = getNextImportantItemIndex(default_row, rowCount() - 1);
 
@@ -119,7 +146,7 @@ QModelIndex MessagesProxyModel::getNextPreviousImportantItemIndex(int default_ro
   return next_index;
 }
 
-QModelIndex MessagesProxyModel::getNextPreviousUnreadItemIndex(int default_row) {
+QModelIndex MessagesProxyModel::getNextPreviousUnreadItemIndex(int default_row) const {
   const bool started_from_zero = default_row == 0;
   QModelIndex next_index = getNextUnreadItemIndex(default_row, rowCount() - 1);
 
@@ -129,6 +156,21 @@ QModelIndex MessagesProxyModel::getNextPreviousUnreadItemIndex(int default_row) 
   }
 
   return next_index;
+}
+
+QModelIndex MessagesProxyModel::indexFromMessage(const Message& msg) const {
+  for (int i = 0; i < rowCount(); i++) {
+    auto idx = index(i, 0);
+    auto id =
+      m_sourceModel->data(m_sourceModel->index(mapToSource(idx).row(), MSG_DB_ID_INDEX), Qt::ItemDataRole::EditRole)
+        .toInt();
+
+    if (id == msg.m_id) {
+      return idx;
+    }
+  }
+
+  return QModelIndex();
 }
 
 QModelIndex MessagesProxyModel::getNextImportantItemIndex(int default_row, int max_row) const {
@@ -186,12 +228,20 @@ bool MessagesProxyModel::filterAcceptsRow(int source_row, const QModelIndex& sou
   // otherwise they would just disappear from the list for example when batch marked as read
   // which is distracting.
   return QSortFilterProxyModel::filterAcceptsRow(source_row, source_parent) &&
-         (m_sourceModel->cache()->containsData(source_row) ||
-          filterAcceptsMessage(m_sourceModel->messageAt(source_row)));
+         (m_sourceModel->cache()->containsData(source_row) || filterAcceptsMessage(source_row));
+}
+
+int MessagesProxyModel::additionalArticleId() const {
+  return m_additionalArticleId;
+}
+
+void MessagesProxyModel::setAdditionalArticleId(int newAdditionalArticleId) {
+  m_additionalArticleId = newAdditionalArticleId;
 }
 
 void MessagesProxyModel::setMessageListFilter(MessageListFilter filter) {
   m_filter = filter;
+  m_additionalArticleId = 0;
 }
 
 QModelIndexList MessagesProxyModel::mapListFromSource(const QModelIndexList& indexes, bool deep) const {
@@ -218,7 +268,8 @@ QModelIndexList MessagesProxyModel::match(const QModelIndex& start,
   QModelIndexList result;
   const int match_type = flags & 0x0F;
   const Qt::CaseSensitivity case_sensitivity = Qt::CaseSensitivity::CaseInsensitive;
-  const bool wrap = (flags & Qt::MatchFlag::MatchWrap) > 0;
+  const bool wrap = Globals::hasFlag(flags, Qt::MatchFlag::MatchWrap);
+  ;
   const bool all_hits = (hits == -1);
   QString entered_text;
   int from = start.row();

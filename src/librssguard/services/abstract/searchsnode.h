@@ -4,10 +4,9 @@
 #define SEARCHSNODE_H
 
 #include "services/abstract/rootitem.h"
-
 #include "services/abstract/search.h"
 
-class SearchsNode : public RootItem {
+class RSSGUARD_DLLSPEC SearchsNode : public RootItem {
     Q_OBJECT
 
   public:
@@ -18,9 +17,9 @@ class SearchsNode : public RootItem {
 
     virtual QList<Message> undeletedMessages() const;
     virtual QList<QAction*> contextMenuFeedsList();
+
     virtual int countOfUnreadMessages() const;
     virtual int countOfAllMessages() const;
-    virtual void updateCounts(bool including_total_count);
 
     Search* probeById(const QString& custom_id);
 

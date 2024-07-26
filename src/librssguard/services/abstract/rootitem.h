@@ -28,11 +28,19 @@ class RSSGUARD_DLLSPEC RootItem : public QObject {
     Q_PROPERTY(QString customId READ customId)
 
   public:
-    enum class ReadStatus { Unread = 0, Read = 1, Unknown = 256 };
+    enum class ReadStatus {
+      Unread = 0,
+      Read = 1,
+      Unknown = 256
+    };
 
     // Holds statuses for messages
     // to be switched importance (starred).
-    enum class Importance { NotImportant = 0, Important = 1, Unknown = 256 };
+    enum class Importance {
+      NotImportant = 0,
+      Important = 1,
+      Unknown = 256
+    };
 
     // Describes the kind of the item.
     enum class Kind {
@@ -66,17 +74,15 @@ class RSSGUARD_DLLSPEC RootItem : public QObject {
     // Can properties of this item be edited?
     virtual bool canBeEdited() const;
 
-    // Performs editing of properties of this item (probably via dialog)
-    // and returns result status.
-    virtual bool editViaGui();
-
     // Can the item be deleted?
     virtual bool canBeDeleted() const;
 
     // Performs deletion of the item, this
     // method should NOT display any additional dialogs.
     // Returns result status.
-    virtual bool deleteViaGui();
+    virtual bool deleteItem();
+
+    virtual bool isFetching() const;
 
     // Performs all needed steps (DB update, remote server update)
     // to mark this item as read/unread.
@@ -152,7 +158,7 @@ class RSSGUARD_DLLSPEC RootItem : public QObject {
     // Returns list of feeds complemented by their own string CUSTOM ID.
     QHash<QString, Feed*> getHashedSubTreeFeeds() const;
 
-    QList<Feed*> getSubTreeFeeds() const;
+    QList<Feed*> getSubTreeFeeds(bool recursive = true) const;
     QList<Feed*> getSubTreeAutoFetchingWithManualIntervalsFeeds() const;
     QList<Feed*> getSubAutoFetchingEnabledFeeds() const;
 

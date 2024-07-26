@@ -2,15 +2,16 @@
 
 #include "gui/settings/settingsfeedsmessages.h"
 
+#include "core/feedsmodel.h"
 #include "definitions/definitions.h"
 #include "gui/dialogs/formmain.h"
 #include "gui/feedmessageviewer.h"
-#include "gui/feedsview.h"
-#include "gui/guiutilities.h"
-#include "gui/messagesview.h"
+#include "gui/messagebox.h"
 #include "gui/reusable/timespinbox.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/feedreader.h"
+#include "miscellaneous/settings.h"
+#include "miscellaneous/textfactory.h"
 
 #include <QFontDialog>
 #include <QLocale>
@@ -23,6 +24,8 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
 
   m_ui->m_spinAutoUpdateInterval->setMode(TimeSpinBox::Mode::MinutesSeconds);
   m_ui->m_spinStartupUpdateDelay->setMode(TimeSpinBox::Mode::MinutesSeconds);
+
+  m_ui->m_wdgArticleLimiting->setForAppWideFeatures(true, false);
 
   initializeMessageDateFormats();
 
@@ -42,6 +45,18 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
 
     m_ui->m_cmbUnreadIconType->addItem(MessagesModel::descriptionOfUnreadIcon(en), int(en));
   }
+
+  m_ui->m_cmbArticleMarkingPolicy->addItem(tr("immediately"), int(MessagesView::ArticleMarkingPolicy::MarkImmediately));
+  m_ui->m_cmbArticleMarkingPolicy->addItem(tr("only manually"),
+                                           int(MessagesView::ArticleMarkingPolicy::MarkOnlyManually));
+  m_ui->m_cmbArticleMarkingPolicy->addItem(tr("with delay"), int(MessagesView::ArticleMarkingPolicy::MarkWithDelay));
+
+  updateArticleMarkingPolicyDelay();
+
+  connect(m_ui->m_cmbArticleMarkingPolicy,
+          QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this,
+          &SettingsFeedsMessages::updateArticleMarkingPolicyDelay);
 
   connect(m_ui->m_cbShowEnclosuresDirectly, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_spinHeightImageAttachments,
@@ -67,12 +82,21 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
     }
   });
 
+  connect(m_ui->m_cmbArticleMarkingPolicy,
+          QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this,
+          &SettingsFeedsMessages::dirtifySettings);
+  connect(m_ui->m_spinArticleMarkingPolicy,
+          static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged),
+          this,
+          &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_gbFeedListFont, &QGroupBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_gbArticleListFont, &QGroupBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_cbListsRestrictedShortcuts, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_cmbIgnoreContentsChanges, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_cbHideCountsIfNoUnread, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_checkAutoUpdate, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
+  connect(m_ui->m_cbUpdateFeedListDuringFetching, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_checkAutoUpdateOnlyUnfocused, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_cmbUnreadIconType,
           QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -91,9 +115,19 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
           m_ui->m_cmbMessagesDateTimeFormat,
           &QComboBox::setEnabled);
 
-  connect(m_ui->m_checkMessagesTimeFormat, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_cmbFastAutoUpdate, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
+
+  connect(m_ui->m_checkMessagesTimeFormat, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_checkMessagesTimeFormat, &QCheckBox::toggled, m_ui->m_cmbMessagesTimeFormat, &QComboBox::setEnabled);
+
+  connect(m_ui->m_checkMessagesDateTimeFormatForDatesOnly,
+          &QCheckBox::toggled,
+          this,
+          &SettingsFeedsMessages::dirtifySettings);
+  connect(m_ui->m_checkMessagesDateTimeFormatForDatesOnly,
+          &QCheckBox::toggled,
+          m_ui->m_cmbMessagesDateTimeFormatForDatesOnly,
+          &QComboBox::setEnabled);
 
   connect(m_ui->m_checkRemoveReadMessagesOnExit, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_checkBringToForegroundAfterMsgOpened,
@@ -101,6 +135,7 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
           this,
           &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_checkUpdateAllFeedsOnStartup, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
+  connect(m_ui->m_cbLegacyArticleFormatting, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
   connect(m_ui->m_spinAutoUpdateInterval,
           static_cast<void (QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged),
           this,
@@ -156,7 +191,12 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
           &QComboBox::currentTextChanged,
           this,
           &SettingsFeedsMessages::dirtifySettings);
+
   connect(m_ui->m_cmbMessagesTimeFormat, &QComboBox::currentTextChanged, this, &SettingsFeedsMessages::dirtifySettings);
+  connect(m_ui->m_cmbMessagesDateTimeFormatForDatesOnly,
+          &QComboBox::currentTextChanged,
+          this,
+          &SettingsFeedsMessages::dirtifySettings);
 
   connect(m_ui->m_cbFixupArticleDatetime, &QCheckBox::toggled, this, &SettingsFeedsMessages::dirtifySettings);
 
@@ -180,6 +220,7 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
 
   emit m_ui->m_cmbMessagesDateTimeFormat->currentTextChanged({});
   emit m_ui->m_cmbMessagesTimeFormat->currentTextChanged({});
+  emit m_ui->m_cmbMessagesDateTimeFormatForDatesOnly->currentTextChanged({});
 
   connect(m_ui->m_btnChangeMessagesFont, &QPushButton::clicked, this, [&]() {
     changeFont(*m_ui->m_lblMessagesFont);
@@ -197,6 +238,8 @@ SettingsFeedsMessages::SettingsFeedsMessages(Settings* settings, QWidget* parent
     m_ui->m_spinFeedUpdateTimeout->setSuffix(QSL(" ") + m_ui->m_spinFeedUpdateTimeout->suffix());
   }
 
+  connect(m_ui->m_wdgArticleLimiting, &ArticleAmountControl::changed, this, &SettingsFeedsMessages::dirtifySettings);
+
   m_ui->m_spinRelativeArticleTime->setValue(-1);
 }
 
@@ -204,11 +247,16 @@ SettingsFeedsMessages::~SettingsFeedsMessages() {
   delete m_ui;
 }
 
+QIcon SettingsFeedsMessages::icon() const {
+  return qApp->icons()->fromTheme(QSL("mail-mark-read"));
+}
+
 void SettingsFeedsMessages::initializeMessageDateFormats() {
-  QStringList patterns = TextFactory::dateTimePatterns();
+  QStringList patterns = TextFactory::dateTimePatterns(false);
 
   m_ui->m_cmbMessagesDateTimeFormat->addItems(patterns);
   m_ui->m_cmbMessagesTimeFormat->addItems(patterns);
+  m_ui->m_cmbMessagesDateTimeFormatForDatesOnly->addItems(patterns);
 
   for (int i = 0; i < patterns.size(); i++) {
     m_ui->m_cmbMessagesDateTimeFormat->setItemData(i,
@@ -217,6 +265,9 @@ void SettingsFeedsMessages::initializeMessageDateFormats() {
     m_ui->m_cmbMessagesTimeFormat->setItemData(i,
                                                QDateTime::currentDateTime().toString(patterns.at(i)),
                                                Qt::ItemDataRole::ToolTipRole);
+    m_ui->m_cmbMessagesDateTimeFormatForDatesOnly->setItemData(i,
+                                                               QDateTime::currentDateTime().toString(patterns.at(i)),
+                                                               Qt::ItemDataRole::ToolTipRole);
   }
 }
 
@@ -230,8 +281,24 @@ void SettingsFeedsMessages::changeFont(QLabel& lbl) {
   }
 }
 
+MessagesView::ArticleMarkingPolicy SettingsFeedsMessages::selectedArticleMarkingPolicy() const {
+  return MessagesView::ArticleMarkingPolicy(m_ui->m_cmbArticleMarkingPolicy->currentData().toInt());
+}
+
 void SettingsFeedsMessages::loadSettings() {
   onBeginLoadSettings();
+
+  if (!qApp->usingLite()) {
+    m_ui->m_cbLegacyArticleFormatting->setVisible(false);
+  }
+
+  m_ui->m_cmbArticleMarkingPolicy
+    ->setCurrentIndex(m_ui->m_cmbArticleMarkingPolicy->findData(settings()
+                                                                  ->value(GROUP(Messages),
+                                                                          SETTING(Messages::ArticleMarkOnSelection))
+                                                                  .toInt()));
+  m_ui->m_spinArticleMarkingPolicy
+    ->setValue(settings()->value(GROUP(Messages), SETTING(Messages::ArticleMarkOnSelectionDelay)).toInt());
 
   m_ui->m_spinRelativeArticleTime
     ->setValue(settings()->value(GROUP(Messages), SETTING(Messages::RelativeTimeForNewerArticles)).toInt());
@@ -240,6 +307,8 @@ void SettingsFeedsMessages::loadSettings() {
   m_ui->m_spinHeightRowsMessages->setValue(settings()->value(GROUP(GUI), SETTING(GUI::HeightRowMessages)).toInt());
   m_ui->m_spinHeightRowsFeeds->setValue(settings()->value(GROUP(GUI), SETTING(GUI::HeightRowFeeds)).toInt());
 
+  m_ui->m_cbUpdateFeedListDuringFetching
+    ->setChecked(settings()->value(GROUP(Feeds), SETTING(Feeds::UpdateFeedListDuringFetching)).toBool());
   m_ui->m_cbListsRestrictedShortcuts
     ->setChecked(settings()->value(GROUP(Feeds), SETTING(Feeds::OnlyBasicShortcutsInLists)).toBool());
   m_ui->m_cbHideCountsIfNoUnread
@@ -260,6 +329,16 @@ void SettingsFeedsMessages::loadSettings() {
     ->setChecked(settings()->value(GROUP(Feeds), SETTING(Feeds::AutoUpdateOnlyUnfocused)).toBool());
   m_ui->m_spinAutoUpdateInterval->setValue(settings()->value(GROUP(Feeds), SETTING(Feeds::AutoUpdateInterval)).toInt());
   m_ui->m_spinFeedUpdateTimeout->setValue(settings()->value(GROUP(Feeds), SETTING(Feeds::UpdateTimeout)).toInt());
+
+  if (qApp->usingLite()) {
+    m_ui->m_cbLegacyArticleFormatting
+      ->setChecked(settings()->value(GROUP(Messages), SETTING(Messages::UseLegacyArticleFormat)).toBool());
+  }
+
+  Feed::ArticleIgnoreLimit art_limit = Feed::ArticleIgnoreLimit::fromSettings();
+
+  m_ui->m_wdgArticleLimiting->load(art_limit);
+
   m_ui->m_cmbFastAutoUpdate->setChecked(settings()->value(GROUP(Feeds), SETTING(Feeds::FastAutoUpdate)).toBool());
   m_ui->m_checkUpdateAllFeedsOnStartup
     ->setChecked(settings()->value(GROUP(Feeds), SETTING(Feeds::FeedsUpdateOnStartup)).toBool());
@@ -278,7 +357,7 @@ void SettingsFeedsMessages::loadSettings() {
   m_ui->m_cbArticleViewerAlwaysVisible
     ->setChecked(settings()->value(GROUP(Messages), SETTING(Messages::AlwaysDisplayItemPreview)).toBool());
   m_ui->m_spinHeightImageAttachments
-    ->setValue(settings()->value(GROUP(Messages), SETTING(Messages::MessageHeadImageHeight)).toInt());
+    ->setValue(settings()->value(GROUP(Messages), SETTING(Messages::LimitArticleImagesHeight)).toInt());
   m_ui->m_cbShowEnclosuresDirectly
     ->setChecked(settings()->value(GROUP(Messages), SETTING(Messages::DisplayEnclosuresInMessage)).toBool());
 
@@ -294,6 +373,11 @@ void SettingsFeedsMessages::loadSettings() {
     ->setChecked(settings()->value(GROUP(Messages), SETTING(Messages::UseCustomTime)).toBool());
   m_ui->m_cmbMessagesTimeFormat
     ->setCurrentText(settings()->value(GROUP(Messages), SETTING(Messages::CustomTimeFormat)).toString());
+
+  m_ui->m_checkMessagesDateTimeFormatForDatesOnly
+    ->setChecked(settings()->value(GROUP(Messages), SETTING(Messages::UseCustomFormatForDatesOnly)).toBool());
+  m_ui->m_cmbMessagesDateTimeFormatForDatesOnly
+    ->setCurrentText(settings()->value(GROUP(Messages), SETTING(Messages::CustomFormatForDatesOnly)).toString());
 
   QFont fon;
 
@@ -325,19 +409,51 @@ void SettingsFeedsMessages::saveSettings() {
   onBeginSaveSettings();
 
   settings()->setValue(GROUP(Messages),
+                       Messages::ArticleMarkOnSelection,
+                       m_ui->m_cmbArticleMarkingPolicy->currentData().toInt());
+
+  settings()->setValue(GROUP(Messages),
+                       Messages::ArticleMarkOnSelectionDelay,
+                       m_ui->m_spinArticleMarkingPolicy->value());
+
+  qApp->mainForm()->tabWidget()->feedMessageViewer()->messagesView()->setupArticleMarkingPolicy();
+
+  settings()->setValue(GROUP(Messages),
                        Messages::RelativeTimeForNewerArticles,
                        m_ui->m_spinRelativeArticleTime->value());
   settings()->setValue(GROUP(Messages), Messages::ArticleListPadding, m_ui->m_spinPaddingRowsMessages->value());
   settings()->setValue(GROUP(GUI), GUI::HeightRowMessages, m_ui->m_spinHeightRowsMessages->value());
   settings()->setValue(GROUP(GUI), GUI::HeightRowFeeds, m_ui->m_spinHeightRowsFeeds->value());
 
+  settings()->setValue(GROUP(Feeds),
+                       Feeds::UpdateFeedListDuringFetching,
+                       m_ui->m_cbUpdateFeedListDuringFetching->isChecked());
   settings()->setValue(GROUP(Feeds), Feeds::OnlyBasicShortcutsInLists, m_ui->m_cbListsRestrictedShortcuts->isChecked());
 
   settings()->setValue(GROUP(Feeds), Feeds::HideCountsIfNoUnread, m_ui->m_cbHideCountsIfNoUnread->isChecked());
   settings()->setValue(GROUP(Messages), Messages::UnreadIconType, m_ui->m_cmbUnreadIconType->currentData().toInt());
+
+  // Make registry hack to make "show app window after external viewer called" feature
+  // work more reliably on Windows 10+.
+#if defined(Q_OS_WIN)
+  if (!settings()->value(GROUP(Messages), SETTING(Messages::BringAppToFrontAfterMessageOpenedExternally)).toBool() &&
+      m_ui->m_checkBringToForegroundAfterMsgOpened->isChecked()) {
+    QSettings registry_key(QSL("HKEY_CURRENT_USER\\Control Panel\\Desktop"), QSettings::Format::NativeFormat);
+
+    registry_key.setValue(QSL("ForegroundFlashCount"), 3);
+    registry_key.setValue(QSL("ForegroundLockTimeout"), 0);
+
+    MsgBox::show(this,
+                 QMessageBox::Icon::Warning,
+                 tr("PC restart needed"),
+                 tr("Your PC needs to be restarted to make some of enabled features fully working."));
+  }
+#endif
+
   settings()->setValue(GROUP(Messages),
                        Messages::BringAppToFrontAfterMessageOpenedExternally,
                        m_ui->m_checkBringToForegroundAfterMsgOpened->isChecked());
+
   settings()->setValue(GROUP(Messages),
                        Messages::KeepCursorInCenter,
                        m_ui->m_checkKeppMessagesInTheMiddle->isChecked());
@@ -346,6 +462,24 @@ void SettingsFeedsMessages::saveSettings() {
   settings()->setValue(GROUP(Feeds), Feeds::AutoUpdateOnlyUnfocused, m_ui->m_checkAutoUpdateOnlyUnfocused->isChecked());
   settings()->setValue(GROUP(Feeds), Feeds::AutoUpdateInterval, m_ui->m_spinAutoUpdateInterval->value());
   settings()->setValue(GROUP(Feeds), Feeds::UpdateTimeout, m_ui->m_spinFeedUpdateTimeout->value());
+
+  if (qApp->usingLite()) {
+    settings()->setValue(GROUP(Messages),
+                         Messages::UseLegacyArticleFormat,
+                         m_ui->m_cbLegacyArticleFormatting->isChecked());
+  }
+
+  Feed::ArticleIgnoreLimit art_limit = m_ui->m_wdgArticleLimiting->save();
+
+  settings()->setValue(GROUP(Messages), Messages::AvoidOldArticles, art_limit.m_avoidOldArticles);
+  settings()->setValue(GROUP(Messages), Messages::DateTimeToAvoidArticle, art_limit.m_dtToAvoid);
+  settings()->setValue(GROUP(Messages), Messages::HoursToAvoidArticle, art_limit.m_hoursToAvoid);
+
+  settings()->setValue(GROUP(Messages), Messages::LimitDoNotRemoveStarred, art_limit.m_doNotRemoveStarred);
+  settings()->setValue(GROUP(Messages), Messages::LimitDoNotRemoveUnread, art_limit.m_doNotRemoveUnread);
+  settings()->setValue(GROUP(Messages), Messages::LimitCountOfArticles, art_limit.m_keepCountOfArticles);
+  settings()->setValue(GROUP(Messages), Messages::LimitRecycleInsteadOfPurging, art_limit.m_moveToBinDontPurge);
+
   settings()->setValue(GROUP(Feeds), Feeds::FastAutoUpdate, m_ui->m_cmbFastAutoUpdate->isChecked());
   settings()->setValue(GROUP(Feeds), Feeds::FeedsUpdateOnStartup, m_ui->m_checkUpdateAllFeedsOnStartup->isChecked());
   settings()->setValue(GROUP(Feeds), Feeds::FeedsUpdateStartupDelay, m_ui->m_spinStartupUpdateDelay->value());
@@ -353,7 +487,9 @@ void SettingsFeedsMessages::saveSettings() {
   settings()->setValue(GROUP(Feeds), Feeds::EnableTooltipsFeedsMessages, m_ui->m_checkShowTooltips->isChecked());
   settings()->setValue(GROUP(Messages), Messages::IgnoreContentsChanges, m_ui->m_cmbIgnoreContentsChanges->isChecked());
   settings()->setValue(GROUP(Messages), Messages::MultilineArticleList, m_ui->m_checkMultilineArticleList->isChecked());
-  settings()->setValue(GROUP(Messages), Messages::MessageHeadImageHeight, m_ui->m_spinHeightImageAttachments->value());
+  settings()->setValue(GROUP(Messages),
+                       Messages::LimitArticleImagesHeight,
+                       m_ui->m_spinHeightImageAttachments->value());
   settings()->setValue(GROUP(Messages),
                        Messages::DisplayEnclosuresInMessage,
                        m_ui->m_cbShowEnclosuresDirectly->isChecked());
@@ -365,11 +501,19 @@ void SettingsFeedsMessages::saveSettings() {
   settings()->setValue(GROUP(Messages),
                        Messages::AlwaysDisplayItemPreview,
                        m_ui->m_cbArticleViewerAlwaysVisible->isChecked());
+
   settings()->setValue(GROUP(Messages), Messages::UseCustomDate, m_ui->m_checkMessagesDateTimeFormat->isChecked());
   settings()->setValue(GROUP(Messages), Messages::UseCustomTime, m_ui->m_checkMessagesTimeFormat->isChecked());
 
   settings()->setValue(GROUP(Messages), Messages::CustomDateFormat, m_ui->m_cmbMessagesDateTimeFormat->currentText());
   settings()->setValue(GROUP(Messages), Messages::CustomTimeFormat, m_ui->m_cmbMessagesTimeFormat->currentText());
+
+  settings()->setValue(GROUP(Messages),
+                       Messages::UseCustomFormatForDatesOnly,
+                       m_ui->m_checkMessagesDateTimeFormatForDatesOnly->isChecked());
+  settings()->setValue(GROUP(Messages),
+                       Messages::CustomFormatForDatesOnly,
+                       m_ui->m_cmbMessagesDateTimeFormatForDatesOnly->currentText());
 
   // Save fonts.
   settings()->setValue(GROUP(Messages), Messages::PreviewerFontStandard, m_ui->m_lblMessagesFont->font().toString());
@@ -383,6 +527,7 @@ void SettingsFeedsMessages::saveSettings() {
   qApp->mainForm()->tabWidget()->feedMessageViewer()->loadMessageViewerFonts();
 
   qApp->feedReader()->updateAutoUpdateStatus();
+  qApp->feedReader()->feedsModel()->setupBehaviorDuringFetching();
   qApp->feedReader()->feedsModel()->reloadWholeLayout();
 
   qApp->feedReader()->messagesModel()->updateDateFormat();
@@ -402,4 +547,9 @@ void SettingsFeedsMessages::updateDateTimeTooltip() {
       sndr->setToolTip(QDateTime::currentDateTime().toString(sndr->currentText()));
     }
   }
+}
+
+void SettingsFeedsMessages::updateArticleMarkingPolicyDelay() {
+  m_ui->m_spinArticleMarkingPolicy->setEnabled(selectedArticleMarkingPolicy() ==
+                                               MessagesView::ArticleMarkingPolicy::MarkWithDelay);
 }

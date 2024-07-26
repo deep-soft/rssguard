@@ -10,12 +10,11 @@
 #include "gui/messagebox.h"
 #include "miscellaneous/feedreader.h"
 #include "miscellaneous/iconfactory.h"
-#include "miscellaneous/textfactory.h"
+#include "miscellaneous/settings.h"
 #include "services/abstract/feed.h"
 #include "services/abstract/recyclebin.h"
 #include "services/abstract/serviceentrypoint.h"
 #include "services/abstract/serviceroot.h"
-#include "services/standard/standardserviceroot.h"
 
 #include <QMimeData>
 #include <QPair>
@@ -41,6 +40,7 @@ FeedsModel::FeedsModel(QObject* parent) : QAbstractItemModel(parent), m_rootItem
                 << /*: Feed list header "counts" column tooltip.*/ tr("Counts of unread/all mesages.");
 
   setupFonts();
+  setupBehaviorDuringFetching();
 }
 
 FeedsModel::~FeedsModel() {
@@ -93,7 +93,7 @@ QVariant FeedsModel::headerData(int section, Qt::Orientation orientation, int ro
   }
 
   switch (role) {
-    case Qt::DisplayRole:
+    case Qt::ItemDataRole::DisplayRole:
       if (section == FDS_MODEL_TITLE_INDEX) {
         return m_headerData.at(FDS_MODEL_TITLE_INDEX);
       }
@@ -101,10 +101,10 @@ QVariant FeedsModel::headerData(int section, Qt::Orientation orientation, int ro
         return QVariant();
       }
 
-    case Qt::ToolTipRole:
+    case Qt::ItemDataRole::ToolTipRole:
       return m_tooltipData.at(section);
 
-    case Qt::DecorationRole:
+    case Qt::ItemDataRole::DecorationRole:
       if (section == FDS_MODEL_COUNTS_INDEX) {
         return m_countsIcon;
       }
@@ -200,7 +200,9 @@ void FeedsModel::removeItem(RootItem* deleting_item) {
       deleting_item->getParentServiceRoot()->updateCounts(true);
     }
 
-    deleting_item->deleteLater();
+    delete deleting_item;
+    // deleting_item->deleteLater();
+
     notifyWithCounts();
   }
 }
@@ -233,7 +235,7 @@ QList<ServiceRoot*> FeedsModel::serviceRoots() const {
   QList<ServiceRoot*> roots;
   auto ch = m_rootItem->childItems();
 
-  for (RootItem* root : qAsConst(ch)) {
+  for (RootItem* root : std::as_const(ch)) {
     if (root->kind() == RootItem::Kind::ServiceRoot) {
       roots.append(root->toServiceRoot());
     }
@@ -247,7 +249,7 @@ QList<Feed*> FeedsModel::feedsForScheduledUpdate(bool auto_update_now) {
   auto stf = m_rootItem->getSubTreeFeeds();
   auto cur_date = QDateTime::currentDateTimeUtc();
 
-  for (Feed* feed : qAsConst(stf)) {
+  for (Feed* feed : std::as_const(stf)) {
     switch (feed->autoUpdateType()) {
       case Feed::AutoUpdateType::DontAutoUpdate:
         // Do not auto-update this feed ever.
@@ -271,10 +273,6 @@ QList<Feed*> FeedsModel::feedsForScheduledUpdate(bool auto_update_now) {
   }
 
   return feeds_for_update;
-}
-
-QList<Message> FeedsModel::messagesForItem(RootItem* item) const {
-  return item->undeletedMessages();
 }
 
 int FeedsModel::columnCount(const QModelIndex& parent) const {
@@ -328,6 +326,14 @@ RootItem* FeedsModel::rootItem() const {
   return m_rootItem;
 }
 
+void FeedsModel::setupBehaviorDuringFetching() {
+  m_updateDuringFetching = qApp->settings()->value(GROUP(Feeds), SETTING(Feeds::UpdateFeedListDuringFetching)).toBool();
+
+  if (m_updateDuringFetching) {
+    m_updateItemIcon = qApp->icons()->fromTheme(QSL("view-refresh"));
+  }
+}
+
 void FeedsModel::reloadChangedLayout(QModelIndexList list) {
   while (!list.isEmpty()) {
     QModelIndex indx = list.takeFirst();
@@ -344,7 +350,7 @@ void FeedsModel::reloadChangedLayout(QModelIndexList list) {
 }
 
 void FeedsModel::reloadChangedItem(RootItem* item) {
-  reloadChangedLayout(QModelIndexList() << indexForItem(item));
+  reloadChangedLayout({indexForItem(item)});
 }
 
 void FeedsModel::notifyWithCounts() {
@@ -393,6 +399,12 @@ void FeedsModel::setupFonts() {
   m_boldStrikedFont.setStrikeOut(true);
 }
 
+void FeedsModel::informAboutDatabaseCleanup() {
+  for (ServiceRoot* acc : serviceRoots()) {
+    acc->onDatabaseCleanup();
+  }
+}
+
 void FeedsModel::reloadWholeLayout() {
   emit layoutAboutToBeChanged();
   emit layoutChanged();
@@ -425,7 +437,7 @@ bool FeedsModel::restoreAllBins() {
   bool result = true;
   auto srts = serviceRoots();
 
-  for (ServiceRoot* root : qAsConst(srts)) {
+  for (ServiceRoot* root : std::as_const(srts)) {
     RecycleBin* bin_of_root = root->recycleBin();
 
     if (bin_of_root != nullptr) {
@@ -440,7 +452,7 @@ bool FeedsModel::emptyAllBins() {
   bool result = true;
   auto srts = serviceRoots();
 
-  for (ServiceRoot* root : qAsConst(srts)) {
+  for (ServiceRoot* root : std::as_const(srts)) {
     RecycleBin* bin_of_root = root->recycleBin();
 
     if (bin_of_root != nullptr) {
@@ -473,7 +485,7 @@ void FeedsModel::loadActivatedServiceAccounts() {
   auto serv = qApp->feedReader()->feedServices();
 
   // Iterate all globally available feed "service plugins".
-  for (const ServiceEntryPoint* entry_point : qAsConst(serv)) {
+  for (const ServiceEntryPoint* entry_point : std::as_const(serv)) {
     // Load all stored root nodes from the entry point and add those to the model.
     QList<ServiceRoot*> roots = entry_point->initializeSubtree();
 
@@ -492,7 +504,7 @@ void FeedsModel::loadActivatedServiceAccounts() {
 void FeedsModel::stopServiceAccounts() {
   auto serv = serviceRoots();
 
-  for (ServiceRoot* account : qAsConst(serv)) {
+  for (ServiceRoot* account : std::as_const(serv)) {
     account->stop();
   }
 }
@@ -511,17 +523,6 @@ bool FeedsModel::markItemRead(RootItem* item, RootItem::ReadStatus read) {
 
 bool FeedsModel::markItemCleared(RootItem* item, bool clean_read_only) {
   if (item != nullptr) {
-    if (MsgBox::show(nullptr,
-                     QMessageBox::Icon::Question,
-                     tr("Are you sure?"),
-                     tr("Do you really want to clean all articles from selected item?"),
-                     {},
-                     {},
-                     QMessageBox::StandardButton::Yes | QMessageBox::StandardButton::No,
-                     QMessageBox::StandardButton::No) != QMessageBox::StandardButton::Yes) {
-      return false;
-    }
-
     return item->cleanMessages(clean_read_only);
   }
 
@@ -547,6 +548,16 @@ QVariant FeedsModel::data(const QModelIndex& index, int role) const {
       if (!qApp->settings()->value(GROUP(Feeds), SETTING(Feeds::EnableTooltipsFeedsMessages)).toBool()) {
         return QVariant();
       }
+
+    case Qt::ItemDataRole::DecorationRole: {
+      if (index.column() == FDS_MODEL_TITLE_INDEX && m_updateDuringFetching) {
+        RootItem* it = itemForIndex(index);
+
+        if (it->isFetching()) {
+          return m_updateItemIcon;
+        }
+      }
+    }
 
     default:
       return itemForIndex(index)->data(index.column(), role);

@@ -31,8 +31,10 @@ class MessagesProxyModel : public QSortFilterProxyModel {
     explicit MessagesProxyModel(MessagesModel* source_model, QObject* parent = nullptr);
     virtual ~MessagesProxyModel();
 
-    QModelIndex getNextPreviousImportantItemIndex(int default_row);
-    QModelIndex getNextPreviousUnreadItemIndex(int default_row);
+    QModelIndex getNextPreviousImportantItemIndex(int default_row) const;
+    QModelIndex getNextPreviousUnreadItemIndex(int default_row) const;
+
+    QModelIndex indexFromMessage(const Message& msg) const;
 
     // Maps list of indexes.
     QModelIndexList mapListToSource(const QModelIndexList& indexes) const;
@@ -50,13 +52,16 @@ class MessagesProxyModel : public QSortFilterProxyModel {
     // Performs sort of items.
     virtual void sort(int column, Qt::SortOrder order = Qt::AscendingOrder);
 
+    int additionalArticleId() const;
+    void setAdditionalArticleId(int newAdditionalArticleId);
+
   private:
     void initializeFilters();
 
     QModelIndex getNextImportantItemIndex(int default_row, int max_row) const;
     QModelIndex getNextUnreadItemIndex(int default_row, int max_row) const;
 
-    bool filterAcceptsMessage(const Message& msg) const;
+    bool filterAcceptsMessage(int msg_row_index) const;
 
     virtual bool lessThan(const QModelIndex& left, const QModelIndex& right) const;
     virtual bool filterAcceptsRow(int source_row, const QModelIndex& source_parent) const;
@@ -64,8 +69,9 @@ class MessagesProxyModel : public QSortFilterProxyModel {
     // Source model pointer.
     MessagesModel* m_sourceModel;
     MessageListFilter m_filter;
-    QMap<MessageListFilter, std::function<bool(const Message&)>> m_filters;
+    QMap<MessageListFilter, std::function<bool(int)>> m_filters;
     QList<MessageListFilter> m_filterKeys;
+    int m_additionalArticleId;
 };
 
 Q_DECLARE_METATYPE(MessagesProxyModel::MessageListFilter)

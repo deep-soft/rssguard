@@ -3,13 +3,12 @@
 #ifndef COOKIEJAR_H
 #define COOKIEJAR_H
 
-#include <QNetworkCookieJar>
-
 #include "miscellaneous/autosaver.h"
 
+#include <QNetworkCookieJar>
 #include <QReadWriteLock>
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 class QWebEngineCookieStore;
 #endif
 
@@ -41,7 +40,7 @@ class CookieJar : public QNetworkCookieJar {
     bool deleteCookieInternal(const QNetworkCookie& cookie, bool notify_others);
 
   private:
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     QWebEngineCookieStore* m_webEngineCookies;
 #endif
 

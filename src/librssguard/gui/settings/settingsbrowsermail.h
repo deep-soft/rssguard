@@ -4,7 +4,6 @@
 #define SETTINGSBROWSERMAIL_H
 
 #include "gui/settings/settingspanel.h"
-
 #include "miscellaneous/externaltool.h"
 
 #include "ui_settingsbrowsermail.h"
@@ -18,6 +17,7 @@ class SettingsBrowserMail : public SettingsPanel {
     explicit SettingsBrowserMail(Settings* settings, QWidget* parent = nullptr);
     virtual ~SettingsBrowserMail();
 
+    virtual QIcon icon() const;
     virtual QString title() const;
     virtual void loadSettings();
     virtual void saveSettings();

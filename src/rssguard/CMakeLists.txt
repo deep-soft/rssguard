@@ -28,17 +28,9 @@ if(QT_VERSION_MAJOR EQUAL 6)
   target_link_libraries(app PUBLIC
     Qt${QT_VERSION_MAJOR}::Core5Compat
   )
-
-  if(WIN32)
-    target_link_libraries(app PUBLIC
-      Qt${QT_VERSION_MAJOR}::GuiPrivate
-    )
-  endif()
 endif()
 
 if(APPLE)
-  target_compile_options(app PUBLIC -mmacosx-version-min=10.10)
-  target_link_options(app PUBLIC -mmacosx-version-min=10.10)
   set_target_properties(app PROPERTIES
     MACOSX_BUNDLE FALSE
   )
@@ -58,9 +50,8 @@ if(WIN32)
     DESTINATION .
     FILES_MATCHING PATTERN "*.dll"
   )
-  install(DIRECTORY ${CMAKE_SOURCE_DIR}/resources/scripts/clang-format
+  install(FILES ${CMAKE_SOURCE_DIR}/resources/scripts/clang-format/clang-format.exe
     DESTINATION .
-    FILES_MATCHING PATTERN "*.exe"
   )
 elseif(OS2)
   install(TARGETS app DESTINATION .)

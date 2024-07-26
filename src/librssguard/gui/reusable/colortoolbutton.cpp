@@ -2,7 +2,7 @@
 
 #include "gui/reusable/colortoolbutton.h"
 
-#include "definitions/definitions.h"
+#include "miscellaneous/textfactory.h"
 
 #include <QColorDialog>
 #include <QMouseEvent>
@@ -22,7 +22,6 @@ ColorToolButton::ColorToolButton(QWidget* parent) : QToolButton(parent), m_color
 
     if (new_color.isValid()) {
       setColor(new_color);
-      emit colorChanged(new_color);
     }
   });
 }
@@ -31,17 +30,19 @@ QColor ColorToolButton::color() const {
   return m_color;
 }
 
-void ColorToolButton::setColor(const QColor& color) {
+void ColorToolButton::setColor(const QColor& color, bool inform_about_changes) {
   m_color = color;
   repaint();
+
+  if (inform_about_changes) {
+    emit colorChanged(m_color);
+  }
 }
 
 void ColorToolButton::setRandomColor() {
-  auto rnd_color = QRandomGenerator::global()->bounded(0xFFFFFF);
-  auto rnd_color_name = QSL("#%1").arg(QString::number(rnd_color, 16));
+  auto clr = TextFactory::generateRandomColor();
 
-  setColor(rnd_color_name);
-  emit colorChanged(rnd_color_name);
+  setColor(clr);
 }
 
 void ColorToolButton::paintEvent(QPaintEvent* e) {
@@ -77,6 +78,5 @@ void ColorToolButton::mouseReleaseEvent(QMouseEvent* event) {
 
   if (event->button() == Qt::MouseButton::RightButton) {
     setColor(m_alternateColor);
-    emit colorChanged(m_alternateColor);
   }
 }

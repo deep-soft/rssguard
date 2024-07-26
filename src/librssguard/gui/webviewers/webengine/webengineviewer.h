@@ -3,32 +3,31 @@
 #ifndef WEBENGINEVIEWER_H
 #define WEBENGINEVIEWER_H
 
-#include <QWebEngineView>
-
-#include "gui/webviewers/webviewer.h"
-
 #include "core/message.h"
+#include "gui/webviewers/webviewer.h"
 #include "miscellaneous/externaltool.h"
 #include "network-web/webengine/webenginepage.h"
+
+#include <QWebEngineView>
 
 class RootItem;
 class WebBrowser;
 
-class WebEngineViewer : public QWebEngineView, public WebViewer {
+class RSSGUARD_DLLSPEC WebEngineViewer : public QWebEngineView, public WebViewer {
     Q_OBJECT
     Q_INTERFACES(WebViewer)
 
   public:
     explicit WebEngineViewer(QWidget* parent = nullptr);
 
-    RootItem* root() const;
-
   public:
     virtual void loadMessages(const QList<Message>& messages, RootItem* root);
+    virtual PreparedHtml htmlForMessages(const QList<Message>& messages, RootItem* root) const;
     virtual void bindToBrowser(WebBrowser* browser);
     virtual void findText(const QString& text, bool backwards);
     virtual void setUrl(const QUrl& url);
     virtual void setHtml(const QString& html, const QUrl& base_url = {});
+    virtual void setReadabledHtml(const QString& html, const QUrl& base_url = {});
     virtual void clear();
     virtual double verticalScrollBarPosition() const;
     virtual void setVerticalScrollBarPosition(double pos);
@@ -37,6 +36,8 @@ class WebEngineViewer : public QWebEngineView, public WebViewer {
     virtual void setZoomFactor(qreal zoom_factor);
     virtual QString html() const;
     virtual QUrl url() const;
+
+    static QByteArray getJsEnabledHtml(const QString& url, bool worker_thread);
 
   signals:
     void pageTitleChanged(const QString& new_title);
@@ -50,6 +51,8 @@ class WebEngineViewer : public QWebEngineView, public WebViewer {
     void closeWindowRequested();
 
   protected:
+    virtual ContextMenuData provideContextMenuData(QContextMenuEvent* event) const;
+
     virtual QWebEngineView* createWindow(QWebEnginePage::WebWindowType type);
     virtual void contextMenuEvent(QContextMenuEvent* event);
     virtual bool event(QEvent* event);

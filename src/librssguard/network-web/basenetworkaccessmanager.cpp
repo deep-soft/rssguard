@@ -3,12 +3,17 @@
 #include "network-web/basenetworkaccessmanager.h"
 
 #include "miscellaneous/application.h"
-#include "miscellaneous/textfactory.h"
+#include "miscellaneous/settings.h"
 #include "network-web/webfactory.h"
 
 #include <QNetworkProxy>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+
+#if defined(NO_LITE)
+#include <QWebEngineProfile>
+#include <QWebEngineSettings>
+#endif
 
 BaseNetworkAccessManager::BaseNetworkAccessManager(QObject* parent)
   : QNetworkAccessManager(parent), m_enableHttp2(false) {
@@ -63,6 +68,8 @@ QNetworkReply* BaseNetworkAccessManager::createRequest(QNetworkAccessManager::Op
   new_request.setAttribute(QNetworkRequest::Attribute::Http2AllowedAttribute, m_enableHttp2);
 #endif
 
+  // new_request.setMaximumRedirectsAllowed(0);
+
   new_request.setRawHeader(HTTP_HEADERS_COOKIE, QSL("JSESSIONID= ").toLocal8Bit());
 
   auto custom_ua = qApp->web()->customUserAgent();
@@ -75,5 +82,15 @@ QNetworkReply* BaseNetworkAccessManager::createRequest(QNetworkAccessManager::Op
   }
 
   auto reply = QNetworkAccessManager::createRequest(op, new_request, outgoingData);
+
+  auto ssl_conf = reply->sslConfiguration();
+
+  auto aa = ssl_conf.backendConfiguration();
+
+  ssl_conf.setPeerVerifyMode(QSslSocket::PeerVerifyMode::VerifyNone);
+  ssl_conf.setSslOption(QSsl::SslOption::SslOptionDisableLegacyRenegotiation, false);
+
+  reply->setSslConfiguration(ssl_conf);
+
   return reply;
 }

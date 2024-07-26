@@ -4,10 +4,10 @@
 
 #include "database/databasefactory.h"
 #include "database/databasequeries.h"
+#include "definitions/globals.h"
 #include "miscellaneous/application.h"
 #include "services/abstract/cacheforserviceroot.h"
 #include "services/abstract/gui/formaddeditlabel.h"
-#include "services/abstract/labelsnode.h"
 #include "services/abstract/serviceroot.h"
 
 #include <QPainter>
@@ -27,7 +27,7 @@ QColor Label::color() const {
 }
 
 void Label::setColor(const QColor& color) {
-  setIcon(generateIcon(color));
+  setIcon(IconFactory::generateIcon(color));
   m_color = color;
 }
 
@@ -40,29 +40,14 @@ int Label::countOfAllMessages() const {
 }
 
 bool Label::canBeEdited() const {
-  return (getParentServiceRoot()->supportedLabelOperations() & ServiceRoot::LabelOperation::Editing) ==
-         ServiceRoot::LabelOperation::Editing;
-}
-
-bool Label::editViaGui() {
-  FormAddEditLabel form(qApp->mainFormWidget());
-
-  if (form.execForEdit(this)) {
-    QSqlDatabase db = qApp->database()->driver()->connection(metaObject()->className());
-
-    return DatabaseQueries::updateLabel(db, this);
-  }
-  else {
-    return false;
-  }
+  return Globals::hasFlag(getParentServiceRoot()->supportedLabelOperations(), ServiceRoot::LabelOperation::Editing);
 }
 
 bool Label::canBeDeleted() const {
-  return (getParentServiceRoot()->supportedLabelOperations() & ServiceRoot::LabelOperation::Deleting) ==
-         ServiceRoot::LabelOperation::Deleting;
+  return Globals::hasFlag(getParentServiceRoot()->supportedLabelOperations(), ServiceRoot::LabelOperation::Deleting);
 }
 
-bool Label::deleteViaGui() {
+bool Label::deleteItem() {
   QSqlDatabase db = qApp->database()->driver()->connection(metaObject()->className());
 
   if (DatabaseQueries::deleteLabel(db, this)) {
@@ -92,20 +77,6 @@ QList<Message> Label::undeletedMessages() const {
   QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
   return DatabaseQueries::getUndeletedMessagesWithLabel(database, this);
-}
-
-QIcon Label::generateIcon(const QColor& color) {
-  QPixmap pxm(64, 64);
-
-  pxm.fill(Qt::GlobalColor::transparent);
-
-  QPainter paint(&pxm);
-
-  paint.setBrush(color);
-  paint.setPen(Qt::GlobalColor::transparent);
-  paint.drawEllipse(pxm.rect().marginsRemoved(QMargins(2, 2, 2, 2)));
-
-  return pxm;
 }
 
 void Label::assignToMessage(const Message& msg, bool reload_model) {

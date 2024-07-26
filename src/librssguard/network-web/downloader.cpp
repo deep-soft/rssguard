@@ -3,7 +3,6 @@
 #include "network-web/downloader.h"
 
 #include "miscellaneous/application.h"
-#include "miscellaneous/iofactory.h"
 #include "network-web/cookiejar.h"
 #include "network-web/networkfactory.h"
 #include "network-web/silentnetworkaccessmanager.h"
@@ -135,6 +134,14 @@ void Downloader::manipulateData(const QString& url,
   }
 }
 
+static int numberOfRedirections(QNetworkReply* reply) {
+  return reply->property("redirections_count").toInt();
+}
+
+static int setNumberOfRedirections(QNetworkReply* reply, int number) {
+  return reply->setProperty("redirections_count", number);
+}
+
 void Downloader::finished() {
   auto* reply = qobject_cast<QNetworkReply*>(sender());
 
@@ -152,6 +159,19 @@ void Downloader::finished() {
   QUrl redirection_url = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).toUrl();
 
   if (redirection_url.isValid()) {
+    auto redir_number = numberOfRedirections(reply);
+
+    qDebugNN << LOGSEC_NETWORK << "This network request was redirected" << QUOTE_W_SPACE(redir_number) << "times.";
+
+    redir_number++;
+
+    if (redir_number > MAX_NUMBER_OF_REDIRECTIONS) {
+      qDebugNN << LOGSEC_NETWORK << "Aborting request due too many redirections.";
+
+      emit completed(redirection_url, QNetworkReply::NetworkError::TooManyRedirectsError, 404, {});
+      return;
+    }
+
     // Communication indicates that HTTP redirection is needed.
     // Setup redirection URL and download again.
     QNetworkRequest request = reply->request();
@@ -189,6 +209,7 @@ void Downloader::finished() {
 
     if (m_activeReply != nullptr) {
       m_activeReply->setProperty("original_url", original_url);
+      setNumberOfRedirections(m_activeReply, redir_number);
     }
   }
   else {
@@ -212,10 +233,14 @@ void Downloader::finished() {
       m_lastCookies = {};
     }
 
-    m_lastContentType = reply->header(QNetworkRequest::KnownHeaders::ContentTypeHeader);
+    m_lastContentType = reply->header(QNetworkRequest::KnownHeaders::ContentTypeHeader).toString();
     m_lastOutputError = reply->error();
     m_lastHttpStatusCode = reply->attribute(QNetworkRequest::Attribute::HttpStatusCodeAttribute).toInt();
-    m_lastHeaders = reply->rawHeaderPairs();
+    m_lastHeaders.clear();
+
+    for (const QNetworkReply::RawHeaderPair& head : reply->rawHeaderPairs()) {
+      m_lastHeaders.insert(QString::fromLocal8Bit(head.first).toLower(), head.second);
+    }
 
     // original_url = m_activeReply->property("original_url").toUrl();
 
@@ -253,7 +278,9 @@ QList<HttpResponse> Downloader::decodeMultipartAnswer(QNetworkReply* reply) {
 
   QString content_type = reply->header(QNetworkRequest::KnownHeaders::ContentTypeHeader).toString();
   QString boundary = content_type.mid(content_type.indexOf(QL1S("boundary=")) + 9);
+
   QRegularExpression regex(QL1S("--") + boundary + QL1S("(--)?(\\r\\n)?"));
+
   QStringList list = QString::fromUtf8(data).split(regex,
 #if QT_VERSION >= 0x050F00 // Qt >= 5.15.0
                                                    Qt::SplitBehaviorFlags::SkipEmptyParts);
@@ -268,12 +295,18 @@ QList<HttpResponse> Downloader::decodeMultipartAnswer(QNetworkReply* reply) {
   for (const QString& http_response_str : list) {
     // We separate headers and body.
     HttpResponse new_part;
+
+    static QRegularExpression reg_headers(QSL("\\r\\r?\\n"));
+    static QRegularExpression reg_body(QSL("(\\r\\r?\\n){2,}"));
+    static QRegularExpression reg_whites(QSL("[\\n\\r]+"));
+
     int start_of_http = http_response_str.indexOf(QL1S("HTTP/1.1"));
-    int start_of_headers = http_response_str.indexOf(QRegularExpression(QSL("\\r\\r?\\n")), start_of_http);
-    int start_of_body = http_response_str.indexOf(QRegularExpression(QSL("(\\r\\r?\\n){2,}")), start_of_headers + 2);
+    int start_of_headers = http_response_str.indexOf(reg_headers, start_of_http);
+    int start_of_body = http_response_str.indexOf(reg_body, start_of_headers + 2);
+
     QString body = http_response_str.mid(start_of_body);
-    QString headers = http_response_str.mid(start_of_headers, start_of_body - start_of_headers)
-                        .replace(QRegularExpression(QSL("[\\n\\r]+")), QSL("\n"));
+    QString headers =
+      http_response_str.mid(start_of_headers, start_of_body - start_of_headers).replace(reg_whites, QSL("\n"));
 
     auto header_lines = headers.split(QL1C('\n'),
 #if QT_VERSION >= 0x050F00 // Qt >= 5.15.0
@@ -282,7 +315,7 @@ QList<HttpResponse> Downloader::decodeMultipartAnswer(QNetworkReply* reply) {
                                       QString::SplitBehavior::SkipEmptyParts);
 #endif
 
-    for (const QString& header_line : qAsConst(header_lines)) {
+    for (const QString& header_line : std::as_const(header_lines)) {
       int index_colon = header_line.indexOf(QL1C(':'));
 
       if (index_colon > 0) {
@@ -337,7 +370,7 @@ void Downloader::runGetRequest(const QNetworkRequest& request) {
   connect(m_activeReply, &QNetworkReply::finished, this, &Downloader::finished);
 }
 
-QList<QNetworkReply::RawHeaderPair> Downloader::lastHeaders() const {
+QMap<QString, QString> Downloader::lastHeaders() const {
   return m_lastHeaders;
 }
 
@@ -349,7 +382,7 @@ QList<QNetworkCookie> Downloader::lastCookies() const {
   return m_lastCookies;
 }
 
-QVariant Downloader::lastContentType() const {
+QString Downloader::lastContentType() const {
   return m_lastContentType;
 }
 

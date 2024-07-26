@@ -2,15 +2,15 @@
 
 #include "services/abstract/labelsnode.h"
 
+#include "3rd-party/boolinq/boolinq.h"
 #include "database/databasefactory.h"
 #include "database/databasequeries.h"
+#include "definitions/globals.h"
 #include "exceptions/applicationexception.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
 #include "services/abstract/gui/formaddeditlabel.h"
 #include "services/abstract/serviceroot.h"
-
-#include "3rd-party/boolinq/boolinq.h"
 
 LabelsNode::LabelsNode(RootItem* parent_item) : RootItem(parent_item), m_actLabelNew(nullptr) {
   setKind(RootItem::Kind::Labels);
@@ -30,34 +30,6 @@ QList<Message> LabelsNode::undeletedMessages() const {
   QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
   return DatabaseQueries::getUndeletedLabelledMessages(database, getParentServiceRoot()->accountId());
-}
-
-int LabelsNode::countOfUnreadMessages() const {
-  auto chi = childItems();
-
-  if (chi.isEmpty()) {
-    return 0;
-  }
-
-  return boolinq::from(chi)
-    .max([](RootItem* it) {
-      return it->countOfUnreadMessages();
-    })
-    ->countOfUnreadMessages();
-}
-
-int LabelsNode::countOfAllMessages() const {
-  auto chi = childItems();
-
-  if (chi.isEmpty()) {
-    return 0;
-  }
-
-  return boolinq::from(chi)
-    .max([](RootItem* it) {
-      return it->countOfAllMessages();
-    })
-    ->countOfAllMessages();
 }
 
 void LabelsNode::updateCounts(bool including_total_count) {
@@ -120,8 +92,7 @@ QList<QAction*> LabelsNode::contextMenuFeedsList() {
 }
 
 void LabelsNode::createLabel() {
-  if ((getParentServiceRoot()->supportedLabelOperations() & ServiceRoot::LabelOperation::Adding) ==
-      ServiceRoot::LabelOperation::Adding) {
+  if (Globals::hasFlag(getParentServiceRoot()->supportedLabelOperations(), ServiceRoot::LabelOperation::Adding)) {
     FormAddEditLabel frm(qApp->mainFormWidget());
     Label* new_lbl = frm.execForAdd();
 
@@ -132,6 +103,7 @@ void LabelsNode::createLabel() {
         DatabaseQueries::createLabel(db, new_lbl, getParentServiceRoot()->accountId());
 
         getParentServiceRoot()->requestItemReassignment(new_lbl, this);
+        getParentServiceRoot()->requestItemExpand({this}, true);
       }
       catch (const ApplicationException&) {
         new_lbl->deleteLater();

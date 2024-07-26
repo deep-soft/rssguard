@@ -8,12 +8,13 @@
 #include "miscellaneous/iconfactory.h"
 #include "miscellaneous/settings.h"
 
+#include <chrono>
+
 #include <QMenu>
 #include <QPainter>
 #include <QTimer>
 #include <QToolButton>
 #include <QWidgetAction>
-#include <chrono>
 
 using namespace std::chrono_literals;
 
@@ -49,6 +50,8 @@ void MessagesToolBar::saveAndSetActions(const QStringList& actions) {
 QList<QAction*> MessagesToolBar::convertActions(const QStringList& actions) {
   QList<QAction*> available_actions = availableActions();
   QList<QAction*> spec_actions;
+
+  spec_actions.reserve(actions.size());
 
   // Iterate action names and add respectable actions into the toolbar.
   for (const QString& action_name : actions) {

@@ -41,7 +41,7 @@ bool DynamicShortcutsWidget::areShortcutsUnique() const {
 }
 
 void DynamicShortcutsWidget::updateShortcuts() {
-  for (const ActionBinding& binding : qAsConst(m_actionBindings)) {
+  for (const ActionBinding& binding : std::as_const(m_actionBindings)) {
     binding.first->setShortcut(binding.second->shortcut());
   }
 }
@@ -49,7 +49,8 @@ void DynamicShortcutsWidget::updateShortcuts() {
 void DynamicShortcutsWidget::populate(QList<QAction*> actions) {
   m_actionBindings.clear();
   std::sort(actions.begin(), actions.end(), [](QAction* lhs, QAction* rhs) {
-    return QString::localeAwareCompare(lhs->text().replace(QL1S("&"), QString()), rhs->text().replace(QL1S("&"), QString())) < 0;
+    return QString::localeAwareCompare(lhs->text().replace(QL1S("&"), QString()),
+                                       rhs->text().replace(QL1S("&"), QString())) < 0;
   });
   int row_id = 0;
 
@@ -82,7 +83,7 @@ void DynamicShortcutsWidget::populate(QList<QAction*> actions) {
     action_label->setToolTip(action->toolTip());
     action_label->setWordWrap(true);
 
-    //action_label->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+    // action_label->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
 
     auto* action_icon = new QLabel(this);
 

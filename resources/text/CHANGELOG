@@ -1,3 +1,275 @@
+4.7.2
+-----
+
+Fixed:
+* Some non-lite installation packages were wrongly named. (#1426)
+* Plugins were loaded multiple times. (#1427)
+
+4.7.1
+-----
+
+OK, this is mainly bug-fix release. In the close future (months), expect only bug-fixing releases. Again, we need to make RSS Guard rock stable.
+
+Added:
+* Nothing really.
+
+Fixed:
+* Fixed detection of plugins which was broken due to wrong plugin search path. (#1416, #1420)
+* If "Show unread only" article list filter is active and you select article (which then gets marked read) and then feed is fetched, currently selected article does not suddenly disappear from the list. (#1415)
+* Selected "style" was disappearing from settings dialog even thought it was correctly saved into settings. (#1408)
+* Right-clicking article selects it (and displays its contents) but does not modify read/unread state. This behavior was corrupted in previous release, therefore we just return to old good behavior. (#1410)
+* XML parser now allows leading and trailing blank lines when loading XML of feeds. (#1403)
+* Date/time parsing was further enhanced, although there are some connected issues which will be hunted in the future.
+* Qt5/Windows builds will use only qtmultimedia media player backend because libmpv dropped Windows 7 support.
+* Fixed "About" dialog RSS Guard information formatting.
+
+4.7.0
+-----
+
+OK, dear users. Over recent releases, many features were added and as you can see RSS Guard bug tracker is full of (semi) bug reports which need to be addressed. Therefore I must declare feature-freeze for at least three upcoming releases. No new features will be added in forthcoming future, because RSS Guard codebase must be de-bugged and stabilized first. I will keep my word this time and no feature requests will be implemented.
+
+Sole focus will be on fixing bugs and polish existing features and clean codebase. The other reason for this is also that lately my free time had become much much more limited for many reasons - family, other hobbies, work around house etc.
+
+Added:
+* Full article content can now be fetched with a single button. Button is placed in article viewer toolbar right next to "Reader mode" button. This feature (just as "reader mode" feature) requires Node.js installation. The feature works both for articles and for regular websites opened in embedded web browser.
+* Article now can be marked (upon selection) as read with delay or only manually. (#1017)
+* All RSS Guard plugins/services are now placed in their own library (DLL/SO/DYLIB) files and are loaded by main RSS Guard library dynamically. This means that unused services can now be removed from RSS Guard installation if not used by the user. Also it allows for a cleaner and slimmer common codebase. Refactoring of main RSS Guard library was also done and it is now more usable as regular dynamic-link library. I expect some regressions as this was HUGE change. Also, this change allows new potential interested people in writing new plugins easier as they now can just copy one of existing plugins and tweak for new service. Also this change now propagates to RSS Guard installer which allows you to only install plugins/services you want.
+* Application (Qt) style and icon theme now can be properly set to respect system style/icons and this setting is dynamic, meaning if you change system theme and restart RSS Guard, new theme is honored. (#1352)
+* Button to copy system/app information to "About..." dialog. (#1318)
+* All modal dialogs now remember their sizes forever. (#1336)
+
+Fixed:
+* Removed debugging forgotten code. (#1354)
+* "Cleanup" button in downloader was greyed out when it should not be. (#1350)
+* App crashes when changing notification sound. (#1317)
+* Built-in user-agent was updated. You can also supply your own user-agent, see `rssguard.exe --help` for more info.
+
+4.6.6
+-----
+
+Fixed:
+* Some build problems and regressions are now fixed, sorry for this.
+
+4.6.4
+-----
+
+One bigger new thing, dear users: I decided to start implementing brand new purely command line only version of RSS Guard to allow running RSS Guard in headless/CLI environments like servers. It will likely work like this:
+1. You run regular variant of RSS Guard and setup your feeds, how often they fetch like you normally do when running classic GUI RSS Guard.
+2. You then can launch new CLI-only RSS Guard executable perhaps on your server (or elsewhere) and it will load your settings/database and will perform article fetching regularly.
+
+Added:
+* Existing read/unread state is respected when some article gets "updated" (infamously happens for YouTube feeds). (#1279)
+* NSIS installer was bit tweaked to warn about MSVC runtime. (#1306)
+* iCalendar files (*.ics, *.ical) are now supported. Note that the support is rather basic.
+* Added more ways of limitting amount of articles in each feed. (#1270, #1267)
+* Added way to use old legacy article formatting in "lite" version. (#1286)
+* New way of fetching articles - new "Source" -> "Built-in web browser with JavaScript support" which allows user to use built-in Chromium-based network stack to fetch feeds and other data. It allows even fetching of majority of JavaScript-powered websites. (#1313)
+* More date/time strings for parsing some dates and times in articles.
+* "Title" column in article list is not directly resizable too. Last visible column auto-stretches to fit remaining space. (#1319)
+
+Fixed:
+* Fix freezing when feed uses crazy crazy loooong URL.
+* Fix crash when forwarding e-mail via Gmail plugin.
+* Add forgotten restriction when cleaning data. (a975714f6)
+* ETag conditional loading of feeds was semi-broken. (#1314, #1296)
+* All Unicode characters in feed URLs are now supported. (#1310)
+* Reader mode was changing content for all opened browser tabs. (#1300)
+* Some articles were displayed with broken HTML. (#1293)
+* Size/position of all windows (including modal dialogs) is now guarded to not be out-of-screen-bounds. (#1281)
+* No more crashes when adding some discovered feeds. (#1280)
+* Main window pesky splitters saved with 0 position. (#1271)
+
+4.6.3
+-----
+
+Dear users, there are new features which will be introduced in one of coming releases.
+
+First of them is built-in HTTP API server which will provide basic REST-like interface for working with RSS Guard - getting list of articles, marking articles read or unread, etc. This will allow to use RSS Guard as a article server in local network.
+
+In cooperation with the above feature, new "magazine view" will be implemented. This magazine view will be launchable even completely separately from RSS Guard in web browser and will be able to act as very simple web-based feed/article reader. It will fetch data directly from RSS Guard via its new web API and will display articles including their thumbnails in cool way. This feature will be also expanded in the future, based on user feedback.
+
+Added:
+* Lite internal web browser now properly decodes all HTML pages according to their declared encoding. (9c7f55094)
+* Image downscaling in lite browser is faster. (8b91d4709)
+* Icon for classic RSS/ATOM accounts is now changeable. (#695)
+* If main window is active then "fetching started" notifications are not delivered. (#597)
+* Number of child feed/categories is now shown for each category. (#1183)
+
+Fixed:
+* MPV libs were moved to separate Git submodule. (#1250)
+* Applied workaround to fix PC not sleeping after sound is played. (#1118)
+* Fixed problem with disappearing tabs.
+
+4.6.2
+-----
+
+This release fixes couple of issues found after 4.6.0/4.6.1 releases.
+
+Fixed:
+* Fixed "Browse" button not working in "Media player" tab of settings dialog. (#1245)
+* Was crashing on Linux. (#1244)
+
+4.6.1
+-----
+
+Fixed:
+* Fixed some compilation problems and related issues.
+
+4.6.0
+-----
+
+This feature brings one major feature - podcast/media player. This media player is available when you open context menu for any hyperlink in article which you think leads to audio/video file. Simply right-mouse-click your link and select "Play in media player", then media player will open in next tab and start playing.
+
+Full versions of RSS Guard (with QtWebEngine) include libmpv-based media player which can play basically every thinkable audio/video content. Windows build of RSS Guard even bundles yt-dlp binary to allow out-of-box support for Youtube playback.
+
+Lite variants of RSS Guard include slightly lighter QtMultimedia/ffmpeg-based media player, which also can play many audio/video formats.
+
+Qt5-based lite variants of RSS Guard will likely require you to install some system-wide codec pack.
+
+https://github.com/martinrotter/rssguard/issues/1226
+
+Added:
+* Media/podcast player capabilities. See above for more information.
+* Indication of which feed is actually fetching at the moment can be enabled in settings. (#1203)
+* Newspaper view was removed as it was slow and very buggy. It might be replaced by something better in the future.
+* Sections of settings now have icons.
+* Docs updated.
+* Layout of articles in default nudus-* skins was unified for full/lite versions. Formatting is now very similar.
+* Image size/wrapping behavior was greatly improved in article viewer, particularly in lite version.
+
+Fixed:
+* Context menus in both full/lite article viewer are now more similar.
+* Fixed crashing when editing e-mail via Gmail plugin. (76c7dd170)
+* No more warning journal messages generated on Linux. (#1207)
+* Updated and fixed some languages. (#1205)
+
+4.5.5
+-----
+
+Added:
+* Added feed manipulation for Google Reader API plugin - creating, editing, deleting feeds.
+
+Fixed:
+* Fixed yellow background in nowebengine version.
+* No more double right mouse button click when closing notifications.
+
+4.5.4
+-----
+
+Added:
+* Toast notifications now have configurable width, margins and opacity. Couple of related GUI fixes are also there. (#1125)
+* Standard RSS/ATOM account now can be renamed. (#824)
+* Aux nodes "Important", "Probes", "Unread" and "Labels" now can be disabled per-account separately in account settings dialog. (#584)
+* Toast notifications can be closed with right mouse button click.
+* Google Reader API plugin now offers OPML import and export function. See context menu for it.
+
+Fixed:
+* Updated translations.
+* Fixed integration with Miniflux via Google Reader API plugin. This requires additional testing. (#837)
+
+4.5.3
+-----
+
+Added:
+* Article and feed toolbar heights are now normalized to same values.
+
+Fixed:
+* Fixed couple of cases where feed multi-selection and/or batch operations were not taking multi-selection properly into account.
+* Fixed some unnecessary prompts to restart app in settings dialog.
+* Updated translations and readme.
+
+4.5.2
+-----
+
+Dear users. Note that one of upcoming releases will break-backwards compatibility thus it will be labelled as "5.0.0". Backwards compatibility will be broken in several areas of the application - particularly I want to greatly enhance syntax/API of article filtering scripts, where I plan to restructure existing functions, make it all bit more clear and add some more functions.
+
+Also, some other areas of RSS Guard might be touched so I will use the opportunity to make again some enhancements. I do not expect that DB incompatibility will be as high as it was when transitioning from 3.x to 4.x and I expect that existing RSS Guard databases will be converted to "5.x" format automatically.
+
+Moreover, I thank to all users of this app. Currently according to my internal "guess" I believe that RSS Guard has 5000+ regular users and it is likely one of the most used RSS desktop cross-platform applications. I hope we will grow and I also send big thanks to all who donated some money. It is not much, but I have used some of it to buy parts for my home PC on which I develop RSS guard mostly. Thanks.
+
+Btw, just thinking out loud. If each user contributed 5 USD per year, I could do RSS Guard development as my full-time job, which I would love to. :D
+
+That's all I wanted to say. Thanks, users.
+
+Added:
+* Added new "Discover feeds" dialog which is automatically opened when user hits "Add new feed" button. In this dialog, use does not have to input exact feed address but can enter just regular website address and RSS Guard will try to discover all available feeds possible. (#1134)
+* ATOM/RSS/JSON/Sitemap feeds now automatically use "ETag" HTTP headers which has potential speedup when fetching feeds with no new messages. This can bring 10-80 % speedup if user uses more feeds which do support "ETag". (#1136)
+* Support for Sitemap "sitemap.xml" files is added! Vast majority of websites have sitemaps and RSS Guard now can read them in the same way it does with RSS/ATOM formats. "Discover feeds" dialog has Sitemaps support integrated and it even is able to traverse sitemap indexes. GZipped sitemaps are supported too. (#1129)
+* Added multiple/extended selection to feeds list! Now it is possible to select multiple items at once (feeds, categories, etc.) and perform batch actions on them - batch editing, deleting, marking read/unread, re-sorting - when some feeds are selected it is now in "Edit selected items" dialog possible to batch change only some properties in a very clean and universal way. (#1010, #89)
+* Localizations updated.
+* Documentation updated.
+* Arguments parsing is now totally overhauled. It is now possible to use both double and single quotes to quote arguments. Read "Scraping Websites" chapter in [docs](https://rssguard.readthedocs.io/en/latest/features/scraping.html#scraping-websites) to know more.
+* Local files can now be used directly as sources for feeds, just select "Local file" in add/edit feed dialog.
+
+Fixed:
+* Fixed OPML import/export when some feeds use custom script as source. (#1133)
+* RSS/ATOM parsing is now greatly enhanced.
+
+4.5.1
+-----
+
+!!! [Documentation](https://rssguard.readthedocs.io) was migrated to ReadTheDocs platfotm and some parts of it were updated !!!
+
+Added:
+* Completely new, custom "toast" notifications:
+    * Configurable position on screen.
+    * Can be displayed on secondary screens.
+    * Automatically adopts look of currently active RSS Guard skin.
+    * Can be close via close corner button or via `Esc` keyboard button.
+    * When hovered with mouse, notification stays shown, when not hovered, it is automatically hidden after 15 seconds.
+    * Displays list of newly fetched articles and offers some basic actions like marking as read, showing in article list or in web browser.
+    * These notifications do not need "tray icon" to be activated.
+    * Can be tweaked in `Notifications` section of settings.
+* `pdb` debugging file is now distributed with RSS Guard on Windows.
+* NPM packages updated to latest versions.
+
+Fixed:
+* AppData file now does not contain `<pre>` tags.
+* HTTP redirection cycles are now solved.
+* Web cache is now stored in correct directory on Linux. (#1098)
+* Fixed behavior of Google-based phrase suggestion in web browser navigation text box.
+* Many different features of RSS Guard got minor fixes, some parts of source code were refactored. Particularly, one nasty "semi-bug" was fixed which influenced speed of article switching in article list. It should now be faster. Much faster.
+* Article counting for "regex queries" is now disabled because this was very performance-hungry even with small number of regex queries, sadly.
+* Translations of some languages are now more complete.
+* Some unused source code was removed.
+* Some unused deps were removed.
+
+4.5.0
+-----
+
+!!! Note that at this point, NO new features will be added for at least 4-5 new releases as I must concentrate on fixing bugs and polishing already existing features !!!
+
+Localizations are now translated via Crowdin: https://crowdin.com/project/rssguard
+
+Added:
+* List of article filters assigned to feed is now visible in feed details pane. (#1045)
+* Right-to-left optional layout for feeds/articles. You can switch this in each feed properties.
+* Gmail: Labels are now fetched from the service too and they are synchronizable.
+* New feature called "regex queries" allowing users to have (persistent) regular expression based article list filters. See your feed list for "Regex queries" item and right click to add one.
+* "reader mode" feature now uses skin-based format & colors.
+* All features which generate random colors now use better HSV-based algorithm.
+* Added application-wide and feed-wide ability to limit articles based on article date/time. This can be changed in application settings in "Feed fetching" section and in feed properties dialog in "Articles" section.
+* JavaScript code of article filters now has syntax highlighting.
+* Use non-standard "url" element as fallback for article URLs in RSS format.
+* Percentages of localization progres for each translation is now shown in "Localization" settings section.
+* "clang-format" updated.
+* User CSS styles can now be supplied via file `<user-data-folder>/web/user-styles.css`.
+* When fetching metadata during OPML import, there is now option to NOT fetch icons. (#1009)
+
+Fixed:
+* Icons in feed list are now correctly vertically centered. (#999)
+* Fixes related to word-wrap of long texts in article list and feed details pane. (#1033)
+* Multi-column sorting is now correctly persistent. (#1039)
+* Fixed a problem where article filters are sometimes not applied correctly when feed is fetched.
+* Skin's pallete (dark) are now applied depending on slightly enhanced logic.
+* Skin's custom colors are now applied depending on slightly enhanced logic.
+* HTTP redirection was not working sometimes, breaking some feeds.
+* Docs updated.
+* Feedly: Fix errors when some feeds did not have titles.
+* Almost all localizations refreshed.
+* Fixed multiple crashes.
+* Correctly show numeric badge on Windows if RSS Guard starts in tray/minimized mode.
+
 4.4.0
 -----
 

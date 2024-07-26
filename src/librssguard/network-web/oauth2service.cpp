@@ -25,11 +25,13 @@
 #include "network-web/oauth2service.h"
 
 #include "definitions/definitions.h"
-#include "gui/messagebox.h"
 #include "miscellaneous/application.h"
 #include "network-web/networkfactory.h"
 #include "network-web/oauthhttphandler.h"
 #include "network-web/webfactory.h"
+
+#include <cstdlib>
+#include <utility>
 
 #include <QDebug>
 #include <QInputDialog>
@@ -38,9 +40,6 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRandomGenerator>
-
-#include <cstdlib>
-#include <utility>
 
 OAuth2Service::OAuth2Service(const QString& auth_url,
                              const QString& token_url,

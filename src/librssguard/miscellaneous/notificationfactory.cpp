@@ -4,7 +4,6 @@
 
 #include "3rd-party/boolinq/boolinq.h"
 #include "definitions/definitions.h"
-#include "exceptions/applicationexception.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/settings.h"
 
@@ -14,6 +13,14 @@ NotificationFactory::NotificationFactory(QObject* parent) : QObject(parent) {}
 
 QList<Notification> NotificationFactory::allNotifications() const {
   return m_notifications;
+}
+
+bool NotificationFactory::areNotificationsEnabled() const {
+  return qApp->settings()->value(GROUP(GUI), SETTING(GUI::EnableNotifications)).toBool();
+}
+
+bool NotificationFactory::useToastNotifications() const {
+  return qApp->settings()->value(GROUP(GUI), SETTING(GUI::EnableNotifications)).toBool();
 }
 
 Notification NotificationFactory::notificationForEvent(Notification::Event event) const {
@@ -55,10 +62,11 @@ void NotificationFactory::save(const QList<Notification>& new_notifications, Set
   settings->remove(GROUP(Notifications));
   m_notifications = new_notifications;
 
-  for (const auto& n : qAsConst(m_notifications)) {
+  for (const auto& n : std::as_const(m_notifications)) {
     settings->setValue(GROUP(Notifications),
                        QString::number(int(n.event())),
-                       QStringList{
-                         n.balloonEnabled() ? QSL("1") : QSL("0"), n.soundPath(), QString::number(n.volume())});
+                       QStringList{n.balloonEnabled() ? QSL("1") : QSL("0"),
+                                   n.soundPath(),
+                                   QString::number(n.volume())});
   }
 }

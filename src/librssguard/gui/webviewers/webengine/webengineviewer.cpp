@@ -4,29 +4,30 @@
 
 #include "definitions/definitions.h"
 #include "gui/dialogs/formmain.h"
-#include "gui/tabwidget.h"
 #include "gui/webbrowser.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/externaltool.h"
+#include "miscellaneous/settings.h"
 #include "miscellaneous/skinfactory.h"
 #include "network-web/adblock/adblockicon.h"
 #include "network-web/adblock/adblockmanager.h"
-#include "network-web/networkfactory.h"
 #include "network-web/webengine/webenginepage.h"
 #include "network-web/webfactory.h"
 
 #include <QFileIconProvider>
+#include <QGraphicsView>
 #include <QTimer>
 #include <QToolTip>
+#include <QWheelEvent>
 
 #if QT_VERSION_MAJOR == 6
 #include <QWebEngineContextMenuRequest>
 #else
-#include <QOpenGLWidget>
 #include <QWebEngineContextMenuData>
 #endif
 
-#include <QWheelEvent>
+#include <QWebEngineProfile>
+#include <QWebEngineSettings>
 
 WebEngineViewer::WebEngineViewer(QWidget* parent) : QWebEngineView(parent), m_browser(nullptr), m_root(nullptr) {
   WebEnginePage* page = new WebEnginePage(this);
@@ -52,7 +53,7 @@ WebEnginePage* WebEngineViewer::page() const {
 }
 
 void WebEngineViewer::loadMessages(const QList<Message>& messages, RootItem* root) {
-  auto html_messages = qApp->skins()->generateHtmlOfArticles(messages, root);
+  auto html_messages = htmlForMessages(messages, root);
 
   m_root = root;
   m_messageContents = html_messages.m_html;
@@ -65,6 +66,10 @@ void WebEngineViewer::loadMessages(const QList<Message>& messages, RootItem* roo
   setEnabled(previously_enabled);
 
   page()->runJavaScript(QSL("window.scrollTo(0, 0);"));
+}
+
+PreparedHtml WebEngineViewer::htmlForMessages(const QList<Message>& messages, RootItem* root) const {
+  return qApp->skins()->generateHtmlOfArticles(messages, root, width() * ACCEPTABLE_IMAGE_PERCENTUAL_WIDTH);
 }
 
 void WebEngineViewer::clear() {
@@ -80,67 +85,19 @@ void WebEngineViewer::contextMenuEvent(QContextMenuEvent* event) {
 
 #if QT_VERSION_MAJOR == 6
   QMenu* menu = createStandardContextMenu();
-  auto* menu_pointer = lastContextMenuRequest();
-  QWebEngineContextMenuRequest& menu_data = *menu_pointer;
 #else
   QMenu* menu = page()->createStandardContextMenu();
-  QWebEngineContextMenuData menu_data = page()->contextMenuData();
 #endif
 
-  if (menu_data.linkUrl().isValid()) {
-    QString link_url = menu_data.linkUrl().toString();
-
-    // Add option to open link in external viewe
-    menu->addAction(qApp->icons()->fromTheme(QSL("document-open")), tr("Open link in external browser"), [link_url]() {
-      qApp->web()->openUrlInExternalBrowser(link_url);
-
-      if (qApp->settings()
-            ->value(GROUP(Messages), SETTING(Messages::BringAppToFrontAfterMessageOpenedExternally))
-            .toBool()) {
-        QTimer::singleShot(1000, qApp, []() {
-          qApp->mainForm()->display();
-        });
-      }
-    });
-  }
-
-  if (menu_data.mediaUrl().isValid() || menu_data.linkUrl().isValid()) {
-    QString media_link =
-      menu_data.mediaUrl().isValid() ? menu_data.mediaUrl().toString() : menu_data.linkUrl().toString();
-    QFileIconProvider icon_provider;
-    QMenu* menu_ext_tools = new QMenu(tr("Open with external tool"), menu);
-    auto tools = ExternalTool::toolsFromSettings();
-
-    menu_ext_tools->setIcon(qApp->icons()->fromTheme(QSL("document-open")));
-
-    for (const ExternalTool& tool : qAsConst(tools)) {
-      QAction* act_tool = new QAction(QFileInfo(tool.executable()).fileName(), menu_ext_tools);
-
-      act_tool->setIcon(icon_provider.icon(QFileInfo(tool.executable())));
-      act_tool->setToolTip(tool.executable());
-      act_tool->setData(QVariant::fromValue(tool));
-      menu_ext_tools->addAction(act_tool);
-
-      connect(act_tool, &QAction::triggered, this, [this, act_tool, media_link]() {
-        openUrlWithExternalTool(act_tool->data().value<ExternalTool>(), media_link);
-      });
-    }
-
-    if (menu_ext_tools->actions().isEmpty()) {
-      QAction* act_not_tools = new QAction(tr("No external tools activated"));
-
-      act_not_tools->setEnabled(false);
-      menu_ext_tools->addAction(act_not_tools);
-    }
-
-    menu->addMenu(menu_ext_tools);
-  }
+  menu->removeAction(page()->action(QWebEnginePage::WebAction::OpenLinkInNewWindow));
 
   menu->addAction(qApp->web()->adBlock()->adBlockIcon());
   menu->addAction(qApp->web()->engineSettingsAction());
 
   const QPoint pos = event->globalPos();
   QPoint p(pos.x(), pos.y() + 1);
+
+  processContextMenu(menu, event);
 
   menu->popup(p);
 }
@@ -154,10 +111,6 @@ QWebEngineView* WebEngineViewer::createWindow(QWebEnginePage::WebWindowType type
 
 void WebEngineViewer::openUrlWithExternalTool(ExternalTool tool, const QString& target_url) {
   tool.run(target_url);
-}
-
-RootItem* WebEngineViewer::root() const {
-  return m_root;
 }
 
 void WebEngineViewer::bindToBrowser(WebBrowser* browser) {
@@ -195,6 +148,14 @@ void WebEngineViewer::setUrl(const QUrl& url) {
 
 void WebEngineViewer::setHtml(const QString& html, const QUrl& base_url) {
   QWebEngineView::setHtml(html, base_url);
+
+  // IOFactory::writeFile("a.html", html.toUtf8());
+}
+
+void WebEngineViewer::setReadabledHtml(const QString& html, const QUrl& base_url) {
+  auto better_html = qApp->skins()->prepareHtml(html, base_url);
+
+  setHtml(better_html.m_html, better_html.m_baseUrl);
 }
 
 double WebEngineViewer::verticalScrollBarPosition() const {
@@ -247,4 +208,72 @@ QString WebEngineViewer::html() const {
 
 QUrl WebEngineViewer::url() const {
   return QWebEngineView::url();
+}
+
+QByteArray WebEngineViewer::getJsEnabledHtml(const QString& url, bool worker_thread) {
+  WebEnginePage* page = new WebEnginePage();
+  WebEngineViewer* viewer = nullptr;
+
+  if (worker_thread) {
+    QMetaObject::invokeMethod(
+      qApp,
+      [&] {
+        // NOTE: Must be created on main thread.
+        viewer = new WebEngineViewer();
+      },
+      Qt::ConnectionType::BlockingQueuedConnection);
+
+    viewer->moveToThread(qApp->thread());
+    page->moveToThread(qApp->thread());
+  }
+  else {
+    viewer = new WebEngineViewer();
+  }
+
+  viewer->setPage(page);
+  viewer->setAttribute(Qt::WidgetAttribute::WA_DontShowOnScreen, true);
+  viewer->setAttribute(Qt::WidgetAttribute::WA_DeleteOnClose, true);
+
+  QString html;
+
+  if (worker_thread) {
+    QMetaObject::invokeMethod(viewer, "show", Qt::ConnectionType::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(page,
+                              "pageHtml",
+                              Qt::ConnectionType::BlockingQueuedConnection,
+                              Q_RETURN_ARG(QString, html),
+                              Q_ARG(QString, url));
+  }
+  else {
+    viewer->show();
+    html = page->pageHtml(url);
+  }
+
+  page->deleteLater();
+  viewer->close();
+
+  // IOFactory::writeFile("a.html", html.toUtf8());
+
+  return html.toUtf8();
+}
+
+ContextMenuData WebEngineViewer::provideContextMenuData(QContextMenuEvent* event) const {
+#if QT_VERSION_MAJOR == 6
+  auto* menu_pointer = lastContextMenuRequest();
+  QWebEngineContextMenuRequest& menu_data = *menu_pointer;
+#else
+  QWebEngineContextMenuData menu_data = page()->contextMenuData();
+#endif
+
+  ContextMenuData c;
+
+  if (menu_data.mediaUrl().isValid()) {
+    c.m_mediaUrl = menu_data.linkUrl();
+  }
+
+  if (menu_data.linkUrl().isValid()) {
+    c.m_linkUrl = menu_data.linkUrl();
+  }
+
+  return c;
 }

@@ -2,33 +2,17 @@
 
 #include "gui/feedmessageviewer.h"
 
-#include "3rd-party/boolinq/boolinq.h"
-#include "core/feeddownloader.h"
 #include "core/feedsproxymodel.h"
 #include "core/messagesproxymodel.h"
-#include "database/databasecleaner.h"
-#include "database/databasefactory.h"
-#include "exceptions/applicationexception.h"
-#include "gui/dialogs/formdatabasecleanup.h"
 #include "gui/dialogs/formmain.h"
 #include "gui/feedsview.h"
-#include "gui/messagebox.h"
 #include "gui/messagepreviewer.h"
 #include "gui/messagesview.h"
-#include "gui/systemtrayicon.h"
 #include "gui/toolbars/feedstoolbar.h"
 #include "gui/toolbars/messagestoolbar.h"
-#include "gui/toolbars/statusbar.h"
 #include "gui/webbrowser.h"
-#include "miscellaneous/feedreader.h"
-#include "miscellaneous/iconfactory.h"
-#include "miscellaneous/mutex.h"
 #include "miscellaneous/settings.h"
-#include "miscellaneous/systemfactory.h"
 #include "miscellaneous/templates.h"
-#include "services/standard/standardfeed.h"
-#include "services/standard/standardfeedsimportexportmodel.h"
-#include "services/standard/standardserviceroot.h"
 
 #include <QAction>
 #include <QDebug>
@@ -105,6 +89,10 @@ void FeedMessageViewer::loadSize() {
   if (!settings_msg_header.isEmpty()) {
     m_messagesView->restoreHeaderState(QByteArray::fromBase64(settings_msg_header.toLocal8Bit()));
   }
+  else {
+    // Set default sort column.
+    m_messagesView->header()->setSortIndicator(MSG_DB_DCREATED_INDEX, Qt::SortOrder::DescendingOrder);
+  }
 }
 
 void FeedMessageViewer::loadMessageViewerFonts() {
@@ -121,6 +109,13 @@ bool FeedMessageViewer::areListHeadersEnabled() const {
   return m_listHeadersEnabled;
 }
 
+void FeedMessageViewer::normalizeToolbarHeights() {
+  auto max_height = std::max(m_toolBarFeeds->height(), m_toolBarMessages->height());
+
+  m_toolBarFeeds->setMinimumHeight(max_height);
+  m_toolBarMessages->setMinimumHeight(max_height);
+}
+
 void FeedMessageViewer::onFeedSplitterResized() {
   qDebugNN << LOGSEC_GUI << "Feed splitter moved.";
 
@@ -130,11 +125,20 @@ void FeedMessageViewer::onFeedSplitterResized() {
 void FeedMessageViewer::onMessageSplitterResized() {
   qDebugNN << LOGSEC_GUI << "Message splitter moved.";
 
+  QList<int> sizes = m_messageSplitter->sizes();
+
+  if (sizes.size() == 2 && (sizes[0] == 0 || sizes[1] == 0)) {
+    qWarningNN << LOGSEC_GUI << "Some of splitter position is 0.";
+    return;
+  }
+
+  QVariant siz = toVariant(sizes);
+
   if (m_messageSplitter->orientation() == Qt::Orientation::Vertical) {
-    qApp->settings()->setValue(GROUP(GUI), GUI::SplitterMessagesVertical, toVariant(m_messageSplitter->sizes()));
+    qApp->settings()->setValue(GROUP(GUI), GUI::SplitterMessagesVertical, siz);
   }
   else {
-    qApp->settings()->setValue(GROUP(GUI), GUI::SplitterMessagesHorizontal, toVariant(m_messageSplitter->sizes()));
+    qApp->settings()->setValue(GROUP(GUI), GUI::SplitterMessagesHorizontal, siz);
   }
 }
 
@@ -229,6 +233,42 @@ void FeedMessageViewer::displayMessage(const Message& message, RootItem* root) {
   else {
     m_messagesBrowser->clear();
   }
+}
+
+void FeedMessageViewer::loadMessageToFeedAndArticleList(Feed* feed, const Message& message) {
+  auto idx_src = m_feedsView->sourceModel()->indexForItem(feed);
+  auto idx_map = m_feedsView->model()->mapFromSource(idx_src);
+  auto is_visible = !m_feedsView->isIndexHidden(idx_map);
+
+  if (!idx_map.isValid() || !is_visible) {
+    qApp->showGuiMessage(Notification::Event::GeneralEvent,
+                         GuiMessage(tr("Filtered feed list"),
+                                    tr("Cannot select article in article list as your feed is filtered out from feed "
+                                       "list."),
+                                    QSystemTrayIcon::MessageIcon::Warning),
+                         GuiMessageDestination(true, true));
+    return;
+  }
+
+  // TODO: expand properly
+  m_feedsView->setExpanded(idx_map, true);
+  m_feedsView->setCurrentIndex(idx_map);
+  QCoreApplication::processEvents();
+
+  auto idx_map_msg = m_messagesView->model()->indexFromMessage(message);
+  auto msg_is_visible = !m_messagesView->isRowHidden(idx_map_msg.row(), idx_map_msg);
+
+  if (!idx_map_msg.isValid() || !msg_is_visible) {
+    qApp->showGuiMessage(Notification::Event::GeneralEvent,
+                         GuiMessage(tr("Filtered article list"),
+                                    tr("Cannot select article as it seems your article list is filtered or the article "
+                                       "was deleted."),
+                                    QSystemTrayIcon::MessageIcon::Warning),
+                         GuiMessageDestination(true, true));
+    return;
+  }
+
+  m_messagesView->setCurrentIndex(idx_map_msg);
 }
 
 void FeedMessageViewer::onMessageRemoved(RootItem* root) {

@@ -5,10 +5,10 @@
 #include "3rd-party/boolinq/boolinq.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
+#include "miscellaneous/settings.h"
 #include "services/abstract/category.h"
 #include "services/abstract/feed.h"
 #include "services/abstract/label.h"
-#include "services/abstract/recyclebin.h"
 #include "services/abstract/search.h"
 #include "services/abstract/serviceroot.h"
 
@@ -59,22 +59,22 @@ bool RootItem::canBeEdited() const {
   return false;
 }
 
-bool RootItem::editViaGui() {
-  return false;
-}
-
 bool RootItem::canBeDeleted() const {
   return false;
 }
 
-bool RootItem::deleteViaGui() {
+bool RootItem::deleteItem() {
+  return false;
+}
+
+bool RootItem::isFetching() const {
   return false;
 }
 
 bool RootItem::markAsReadUnread(ReadStatus status) {
   bool result = true;
 
-  for (RootItem* child : qAsConst(m_childItems)) {
+  for (RootItem* child : std::as_const(m_childItems)) {
     result &= child->markAsReadUnread(status);
   }
 
@@ -84,7 +84,7 @@ bool RootItem::markAsReadUnread(ReadStatus status) {
 QList<Message> RootItem::undeletedMessages() const {
   QList<Message> messages;
 
-  for (RootItem* child : qAsConst(m_childItems)) {
+  for (RootItem* child : std::as_const(m_childItems)) {
     if (child->kind() != Kind::Bin && child->kind() != Kind::Labels && child->kind() != Kind::Label) {
       messages.append(child->undeletedMessages());
     }
@@ -96,7 +96,7 @@ QList<Message> RootItem::undeletedMessages() const {
 bool RootItem::cleanMessages(bool clear_only_read) {
   bool result = true;
 
-  for (RootItem* child : qAsConst(m_childItems)) {
+  for (RootItem* child : std::as_const(m_childItems)) {
     if (child->kind() != RootItem::Kind::Bin) {
       result &= child->cleanMessages(clear_only_read);
     }
@@ -106,7 +106,7 @@ bool RootItem::cleanMessages(bool clear_only_read) {
 }
 
 void RootItem::updateCounts(bool including_total_count) {
-  for (RootItem* child : qAsConst(m_childItems)) {
+  for (RootItem* child : std::as_const(m_childItems)) {
     child->updateCounts(including_total_count);
   }
 }
@@ -207,7 +207,12 @@ QVariant RootItem::data(int column, int role) const {
 }
 
 Qt::ItemFlags RootItem::additionalFlags() const {
-  return Qt::ItemFlag::NoItemFlags;
+  if (m_kind == RootItem::Kind::Root) {
+    return Qt::ItemFlag::ItemIsDropEnabled;
+  }
+  else {
+    return Qt::ItemFlag::NoItemFlags;
+  }
 }
 
 bool RootItem::performDragDropChange(RootItem* target_item) {
@@ -217,19 +222,21 @@ bool RootItem::performDragDropChange(RootItem* target_item) {
 
 int RootItem::countOfUnreadMessages() const {
   return boolinq::from(m_childItems).sum([](RootItem* it) {
-    return (it->kind() == RootItem::Kind::Important || it->kind() == RootItem::Kind::Unread ||
-            it->kind() == RootItem::Kind::Labels)
+    return (it->kind() == RootItem::Kind::Bin || it->kind() == RootItem::Kind::Important ||
+            it->kind() == RootItem::Kind::Unread || it->kind() == RootItem::Kind::Labels ||
+            it->kind() == RootItem::Kind::Probes)
              ? 0
-             : it->countOfUnreadMessages();
+             : std::max(it->countOfUnreadMessages(), 0);
   });
 }
 
 int RootItem::countOfAllMessages() const {
   return boolinq::from(m_childItems).sum([](RootItem* it) {
-    return (it->kind() == RootItem::Kind::Important || it->kind() == RootItem::Kind::Unread ||
-            it->kind() == RootItem::Kind::Labels)
+    return (it->kind() == RootItem::Kind::Bin || it->kind() == RootItem::Kind::Important ||
+            it->kind() == RootItem::Kind::Unread || it->kind() == RootItem::Kind::Labels ||
+            it->kind() == RootItem::Kind::Probes)
              ? 0
-             : it->countOfAllMessages();
+             : std::max(it->countOfAllMessages(), 0);
   });
 }
 
@@ -399,9 +406,10 @@ QHash<QString, Feed*> RootItem::getHashedSubTreeFeeds() const {
   return children;
 }
 
-QList<Feed*> RootItem::getSubTreeFeeds() const {
+QList<Feed*> RootItem::getSubTreeFeeds(bool recursive) const {
   QList<Feed*> children;
   QList<RootItem*> traversable_items;
+  bool traversed = false;
 
   traversable_items.append(const_cast<RootItem* const>(this));
 
@@ -413,7 +421,10 @@ QList<Feed*> RootItem::getSubTreeFeeds() const {
       children.append(active_item->toFeed());
     }
 
-    traversable_items.append(active_item->childItems());
+    if (recursive || !traversed) {
+      traversed = true;
+      traversable_items.append(active_item->childItems());
+    }
   }
 
   return children;

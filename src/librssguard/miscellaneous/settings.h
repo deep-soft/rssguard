@@ -3,10 +3,9 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
-#include <QSettings>
-
 #include "definitions/definitions.h"
-
+#include "gui/messagesview.h"
+#include "gui/notifications/toastnotificationsmanager.h"
 #include "miscellaneous/settingsproperties.h"
 #include "miscellaneous/textfactory.h"
 
@@ -15,26 +14,34 @@
 #include <QDateTime>
 #include <QNetworkProxy>
 #include <QReadWriteLock>
+#include <QSettings>
 #include <QStringList>
 #include <QWriteLocker>
 
-#define KEY extern const QString
+#define KEY  RSSGUARD_DLLSPEC extern const QString
 #define DKEY const QString
-#define VALUE(x) extern const x
-#define NON_CONST_VALUE(x) extern x
-#define DVALUE(x) const x
-#define NON_CONST_DVALUE(x) x
-#define SETTING(x) x, x##Def
-#define DEFAULT_VALUE(x) x##Def
-#define GROUP(x) x::ID
 
-#if defined(USE_WEBENGINE)
+#define VALUE(x)           RSSGUARD_DLLSPEC extern const x
+#define NON_CONST_VALUE(x) extern x
+
+#define DVALUE(x)           const x
+#define NON_CONST_DVALUE(x) x
+
+#define SETTING(x)       x, x##Def
+#define DEFAULT_VALUE(x) x##Def
+#define GROUP(x)         x::ID
+
+#if defined(NO_LITE)
 namespace WebEngineAttributes {
   KEY ID;
 }
 #endif
 
 namespace Cookies {
+  KEY ID;
+}
+
+namespace DialogGeometries {
   KEY ID;
 }
 
@@ -50,6 +57,16 @@ namespace Node {
   KEY PackageFolder;
   VALUE(QString) PackageFolderDef;
 } // namespace Node
+
+namespace VideoPlayer {
+  KEY ID;
+
+  KEY MpvUseCustomConfigFolder;
+  VALUE(bool) MpvUseCustomConfigFolderDef;
+
+  KEY MpvCustomConfigFolder;
+  VALUE(QString) MpvCustomConfigFolderDef;
+} // namespace VideoPlayer
 
 namespace AdBlock {
   KEY ID;
@@ -107,6 +124,9 @@ namespace Feeds {
   KEY HideCountsIfNoUnread;
   VALUE(bool) HideCountsIfNoUnreadDef;
 
+  KEY UpdateFeedListDuringFetching;
+  VALUE(bool) UpdateFeedListDuringFetchingDef;
+
   KEY AutoExpandOnSelection;
   VALUE(bool) AutoExpandOnSelectionDef;
 
@@ -123,11 +143,41 @@ namespace Feeds {
 namespace Messages {
   KEY ID;
 
-  KEY MessageHeadImageHeight;
-  VALUE(int) MessageHeadImageHeightDef;
+  KEY LimitArticleImagesHeight;
+  VALUE(int) LimitArticleImagesHeightDef;
+
+  KEY UseLegacyArticleFormat;
+  VALUE(bool) UseLegacyArticleFormatDef;
 
   KEY DisplayEnclosuresInMessage;
   VALUE(bool) DisplayEnclosuresInMessageDef;
+
+  KEY AvoidOldArticles;
+  VALUE(bool) AvoidOldArticlesDef;
+
+  KEY ArticleMarkOnSelection;
+  VALUE(int) ArticleMarkOnSelectionDef;
+
+  KEY ArticleMarkOnSelectionDelay;
+  VALUE(int) ArticleMarkOnSelectionDelayDef;
+
+  KEY DateTimeToAvoidArticle;
+  VALUE(QDateTime) DateTimeToAvoidArticleDef;
+
+  KEY HoursToAvoidArticle;
+  VALUE(int) HoursToAvoidArticleDef;
+
+  KEY LimitDoNotRemoveUnread;
+  VALUE(bool) LimitDoNotRemoveUnreadDef;
+
+  KEY LimitDoNotRemoveStarred;
+  VALUE(bool) LimitDoNotRemoveStarredDef;
+
+  KEY LimitRecycleInsteadOfPurging;
+  VALUE(bool) LimitRecycleInsteadOfPurgingDef;
+
+  KEY LimitCountOfArticles;
+  VALUE(int) LimitCountOfArticlesDef;
 
   KEY AlwaysDisplayItemPreview;
   VALUE(bool) AlwaysDisplayItemPreviewDef;
@@ -141,9 +191,6 @@ namespace Messages {
   KEY Zoom;
   VALUE(qreal) ZoomDef;
 
-  KEY SimpleArticleLayout;
-  VALUE(bool) SimpleArticleLayoutDef;
-
   KEY FixupFutureArticleDateTimes;
   VALUE(bool) FixupFutureArticleDateTimesDef;
 
@@ -155,6 +202,12 @@ namespace Messages {
 
   KEY UseCustomTime;
   VALUE(bool) UseCustomTimeDef;
+
+  KEY CustomFormatForDatesOnly;
+  VALUE(char*) CustomFormatForDatesOnlyDef;
+
+  KEY UseCustomFormatForDatesOnly;
+  VALUE(bool) UseCustomFormatForDatesOnlyDef;
 
   KEY RelativeTimeForNewerArticles;
   VALUE(int) RelativeTimeForNewerArticlesDef;
@@ -212,6 +265,24 @@ namespace GUI {
   KEY EnableNotifications;
   VALUE(bool) EnableNotificationsDef;
 
+  KEY UseToastNotifications;
+  VALUE(bool) UseToastNotificationsDef;
+
+  KEY ToastNotificationsPosition;
+  VALUE(ToastNotificationsManager::NotificationPosition) ToastNotificationsPositionDef;
+
+  KEY ToastNotificationsScreen;
+  VALUE(int) ToastNotificationsScreenDef;
+
+  KEY ToastNotificationsMargin;
+  VALUE(int) ToastNotificationsMarginDef;
+
+  KEY ToastNotificationsOpacity;
+  VALUE(double) ToastNotificationsOpacityDef;
+
+  KEY ToastNotificationsWidth;
+  VALUE(int) ToastNotificationsWidthDef;
+
   KEY MessageViewState;
   VALUE(QString) MessageViewStateDef;
 
@@ -239,7 +310,6 @@ namespace GUI {
   KEY StatusbarActions;
   VALUE(char*) StatusbarActionsDef;
 
-  KEY SettingsWindowInitialSize;
   KEY MainWindowInitialSize;
   KEY MainWindowInitialPosition;
 
@@ -336,6 +406,9 @@ namespace Network {
 
   KEY SendDNT;
   VALUE(bool) SendDNTDef;
+
+  KEY EnableApiServer;
+  VALUE(bool) EnableApiServerDef;
 
   KEY EnableHttp2;
   VALUE(bool) EnableHttp2Def;

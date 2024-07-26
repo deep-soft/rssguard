@@ -2,26 +2,22 @@
 
 #include "services/abstract/feed.h"
 
+#include "3rd-party/boolinq/boolinq.h"
 #include "database/databasequeries.h"
 #include "definitions/definitions.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/feedreader.h"
-#include "miscellaneous/iconfactory.h"
-#include "miscellaneous/mutex.h"
+#include "miscellaneous/settings.h"
 #include "miscellaneous/textfactory.h"
 #include "services/abstract/cacheforserviceroot.h"
 #include "services/abstract/gui/formfeeddetails.h"
-#include "services/abstract/importantnode.h"
-#include "services/abstract/labelsnode.h"
-#include "services/abstract/recyclebin.h"
 #include "services/abstract/serviceroot.h"
-#include "services/abstract/unreadnode.h"
 
 Feed::Feed(RootItem* parent)
   : RootItem(parent), m_source(QString()), m_status(Status::Normal), m_statusString(QString()),
     m_autoUpdateType(AutoUpdateType::DefaultAutoUpdate), m_autoUpdateInterval(DEFAULT_AUTO_UPDATE_INTERVAL),
     m_lastUpdated(QDateTime::currentDateTimeUtc()), m_isSwitchedOff(false), m_isQuiet(false),
-    m_openArticlesDirectly(false), m_messageFilters(QList<QPointer<MessageFilter>>()) {
+    m_openArticlesDirectly(false), m_isRtl(false), m_messageFilters(QList<QPointer<MessageFilter>>()) {
   setKind(RootItem::Kind::Feed);
 }
 
@@ -43,6 +39,8 @@ Feed::Feed(const Feed& other) : RootItem(other) {
   setLastUpdated(other.lastUpdated());
   setMessageFilters(other.messageFilters());
   setOpenArticlesDirectly(other.openArticlesDirectly());
+  setArticleIgnoreLimit(Feed::ArticleIgnoreLimit(other.articleIgnoreLimit()));
+  setIsRtl(other.isRtl());
   setIsSwitchedOff(other.isSwitchedOff());
   setIsQuiet(other.isQuiet());
 }
@@ -77,6 +75,15 @@ QVariant Feed::data(int column, int role) const {
         default:
           return QVariant();
       }
+
+    case TEXT_DIRECTION_ROLE: {
+      if (column == FDS_MODEL_TITLE_INDEX) {
+        return isRtl() ? Qt::LayoutDirection::RightToLeft : Qt::LayoutDirection::LayoutDirectionAuto;
+      }
+      else {
+        return Qt::LayoutDirection::LayoutDirectionAuto;
+      }
+    }
 
     case Qt::ItemDataRole::ForegroundRole:
       switch (status()) {
@@ -142,11 +149,8 @@ bool Feed::canBeEdited() const {
   return true;
 }
 
-bool Feed::editViaGui() {
-  QScopedPointer<FormFeedDetails> form_pointer(new FormFeedDetails(getParentServiceRoot(), qApp->mainFormWidget()));
-
-  form_pointer->addEditFeed(this);
-  return false;
+bool Feed::isFetching() const {
+  return m_status == Status::Fetching;
 }
 
 void Feed::setAutoUpdateInterval(int auto_update_interval) {
@@ -187,6 +191,21 @@ bool Feed::openArticlesDirectly() const {
 
 void Feed::setOpenArticlesDirectly(bool opn) {
   m_openArticlesDirectly = opn;
+}
+
+bool Feed::isRtl() const {
+  return m_isRtl;
+}
+
+void Feed::setIsRtl(bool rtl) {
+  m_isRtl = rtl;
+}
+
+bool Feed::removeUnwantedArticles(QSqlDatabase& db) {
+  Feed::ArticleIgnoreLimit feed_setup = articleIgnoreLimit();
+  Feed::ArticleIgnoreLimit app_setup = Feed::ArticleIgnoreLimit::fromSettings();
+
+  return DatabaseQueries::removeUnwantedArticlesFromFeed(db, this, feed_setup, app_setup);
 }
 
 void Feed::appendMessageFilter(MessageFilter* filter) {
@@ -240,7 +259,8 @@ QString Feed::getAutoUpdateStatusDescription() const {
           tr("uses global settings (%n minute(s) to next auto-fetch of articles)", nullptr, int(secs_to_next / 60.0));
       }
       else {
-        auto_update_string = tr("uses global settings, but global auto-fetching of articles is disabled");
+        auto_update_string = tr("uses global settings, but global auto-fetching "
+                                "of articles is disabled");
       }
 
       break;
@@ -250,7 +270,8 @@ QString Feed::getAutoUpdateStatusDescription() const {
       int secs_to_next = QDateTime::currentDateTimeUtc().secsTo(lastUpdated().addSecs(autoUpdateInterval()));
 
       //: Describes feed auto-update status.
-      auto_update_string = tr("uses specific settings (%n minute(s) to next auto-fetching of new articles)",
+      auto_update_string = tr("uses specific settings (%n minute(s) to next "
+                              "auto-fetching of new articles)",
                               nullptr,
                               int(secs_to_next / 60.0));
       break;
@@ -279,6 +300,18 @@ QString Feed::getStatusDescription() const {
     default:
       return tr("error");
   }
+}
+
+Feed::ArticleIgnoreLimit& Feed::articleIgnoreLimit() {
+  return m_articleIgnoreLimit;
+}
+
+const Feed::ArticleIgnoreLimit& Feed::articleIgnoreLimit() const {
+  return m_articleIgnoreLimit;
+}
+
+void Feed::setArticleIgnoreLimit(const ArticleIgnoreLimit& ignore_limit) {
+  m_articleIgnoreLimit = ignore_limit;
 }
 
 bool Feed::isQuiet() const {
@@ -332,14 +365,47 @@ QString Feed::additionalTooltip() const {
     stat += QSL(" (%1)").arg(m_statusString);
   }
 
+  auto std_fltrs = boolinq::from(m_messageFilters)
+                     .select([](const QPointer<MessageFilter>& pn) {
+                       return pn->name();
+                     })
+                     .toStdList();
+  QStringList fltrs = FROM_STD_LIST(QStringList, std_fltrs);
+
   return tr("Auto-update status: %1\n"
             "Active message filters: %2\n"
             "Status: %3\n"
             "Source: <a href=\"%4\">%4</a>\n"
             "Item ID: %5")
-    .arg(getAutoUpdateStatusDescription(), QString::number(m_messageFilters.size()), stat, m_source, customId());
+    .arg(getAutoUpdateStatusDescription(),
+         m_messageFilters.size() > 0
+           ? QSL("%1 (%2)").arg(QString::number(m_messageFilters.size()), fltrs.join(QSL(", ")))
+           : QString::number(m_messageFilters.size()),
+         stat,
+         m_source,
+         customId());
 }
 
 Qt::ItemFlags Feed::additionalFlags() const {
   return Qt::ItemFlag::ItemNeverHasChildren;
+}
+
+Feed::ArticleIgnoreLimit Feed::ArticleIgnoreLimit::fromSettings() {
+  Feed::ArticleIgnoreLimit art_limit;
+
+  art_limit.m_avoidOldArticles = qApp->settings()->value(GROUP(Messages), SETTING(Messages::AvoidOldArticles)).toBool();
+  art_limit.m_dtToAvoid =
+    qApp->settings()->value(GROUP(Messages), SETTING(Messages::DateTimeToAvoidArticle)).toDateTime();
+  art_limit.m_hoursToAvoid = qApp->settings()->value(GROUP(Messages), SETTING(Messages::HoursToAvoidArticle)).toInt();
+
+  art_limit.m_doNotRemoveStarred =
+    qApp->settings()->value(GROUP(Messages), SETTING(Messages::LimitDoNotRemoveStarred)).toBool();
+  art_limit.m_doNotRemoveUnread =
+    qApp->settings()->value(GROUP(Messages), SETTING(Messages::LimitDoNotRemoveUnread)).toBool();
+  art_limit.m_keepCountOfArticles =
+    qApp->settings()->value(GROUP(Messages), SETTING(Messages::LimitCountOfArticles)).toInt();
+  art_limit.m_moveToBinDontPurge =
+    qApp->settings()->value(GROUP(Messages), SETTING(Messages::LimitRecycleInsteadOfPurging)).toBool();
+
+  return art_limit;
 }

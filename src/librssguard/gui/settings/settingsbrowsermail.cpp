@@ -3,11 +3,11 @@
 #include "gui/settings/settingsbrowsermail.h"
 
 #include "exceptions/applicationexception.h"
-#include "gui/guiutilities.h"
 #include "gui/reusable/networkproxydetails.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/externaltool.h"
 #include "miscellaneous/iconfactory.h"
+#include "miscellaneous/settings.h"
 #include "network-web/cookiejar.h"
 #include "network-web/silentnetworkaccessmanager.h"
 #include "network-web/webfactory.h"
@@ -41,6 +41,7 @@ SettingsBrowserMail::SettingsBrowserMail(Settings* settings, QWidget* parent)
   m_ui->m_listTools->header()->setSectionResizeMode(0, QHeaderView::ResizeMode::ResizeToContents);
 
   connect(m_ui->m_cbEnableHttp2, &QCheckBox::stateChanged, this, &SettingsBrowserMail::dirtifySettings);
+  connect(m_ui->m_cbEnableApiServer, &QCheckBox::stateChanged, this, &SettingsBrowserMail::dirtifySettings);
   connect(m_ui->m_cbIgnoreAllCookies, &QCheckBox::stateChanged, this, &SettingsBrowserMail::dirtifySettings);
   connect(m_ui->m_checkOpenLinksInExternal, &QCheckBox::stateChanged, this, &SettingsBrowserMail::dirtifySettings);
   connect(m_proxyDetails, &NetworkProxyDetails::changed, this, &SettingsBrowserMail::dirtifySettings);
@@ -80,7 +81,7 @@ SettingsBrowserMail::SettingsBrowserMail(Settings* settings, QWidget* parent)
             m_ui->m_btnEditTool->setEnabled(current != nullptr);
           });
 
-#if !defined(USE_WEBENGINE)
+#if !defined(NO_LITE)
   // Remove WebEngine tab.
   m_ui->m_tabBrowserProxy->removeTab(2);
 #else
@@ -93,6 +94,10 @@ SettingsBrowserMail::SettingsBrowserMail(Settings* settings, QWidget* parent)
 
 SettingsBrowserMail::~SettingsBrowserMail() {
   delete m_ui;
+}
+
+QIcon SettingsBrowserMail::icon() const {
+  return qApp->icons()->fromTheme(QSL("applications-internet"), QSL("internet-services"));
 }
 
 void SettingsBrowserMail::changeDefaultBrowserArguments(int index) {
@@ -168,6 +173,7 @@ void SettingsBrowserMail::loadSettings() {
 
   m_ui->m_cbDisableCache->setChecked(settings()->value(GROUP(Browser), SETTING(Browser::DisableCache)).toBool());
   m_ui->m_cbEnableHttp2->setChecked(settings()->value(GROUP(Network), SETTING(Network::EnableHttp2)).toBool());
+  m_ui->m_cbEnableApiServer->setChecked(settings()->value(GROUP(Network), SETTING(Network::EnableApiServer)).toBool());
   m_ui->m_cbIgnoreAllCookies
     ->setChecked(settings()->value(GROUP(Network), SETTING(Network::IgnoreAllCookies)).toBool());
   m_ui->m_checkOpenLinksInExternal
@@ -183,7 +189,7 @@ void SettingsBrowserMail::loadSettings() {
     ->setChecked(settings()->value(GROUP(Browser), SETTING(Browser::CustomExternalBrowserEnabled)).toBool());
 
   // Load settings of e-mail.
-  m_ui->m_cmbExternalEmailPreset->addItem(tr("Mozilla Thunderbird"), QSL("-compose \"subject='%1',body='%2'\""));
+  m_ui->m_cmbExternalEmailPreset->addItem(QSL("Mozilla Thunderbird"), QSL("-compose \"subject='%1',body='%2'\""));
   m_ui->m_txtExternalEmailExecutable
     ->setText(settings()->value(GROUP(Browser), SETTING(Browser::CustomExternalEmailExecutable)).toString());
   m_ui->m_txtExternalEmailArguments
@@ -214,7 +220,14 @@ void SettingsBrowserMail::saveSettings() {
 
   settings()->setValue(GROUP(Browser), Browser::DisableCache, m_ui->m_cbDisableCache->isChecked());
   settings()->setValue(GROUP(Network), Network::EnableHttp2, m_ui->m_cbEnableHttp2->isChecked());
+  settings()->setValue(GROUP(Network), Network::EnableApiServer, m_ui->m_cbEnableApiServer->isChecked());
   settings()->setValue(GROUP(Network), Network::IgnoreAllCookies, m_ui->m_cbIgnoreAllCookies->isChecked());
+
+  qApp->web()->stopApiServer();
+
+  if (m_ui->m_cbEnableApiServer->isChecked()) {
+    qApp->web()->startApiServer();
+  }
 
   settings()->setValue(GROUP(Browser),
                        Browser::OpenLinksInExternalBrowserRightAway,

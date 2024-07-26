@@ -3,13 +3,13 @@
 #ifndef CUSTOMMESSAGEPREVIEWER_H
 #define CUSTOMMESSAGEPREVIEWER_H
 
-#include <QWidget>
-
 #include "core/message.h"
+
+#include <QWidget>
 
 class RootItem;
 
-class CustomMessagePreviewer : public QWidget {
+class RSSGUARD_DLLSPEC CustomMessagePreviewer : public QWidget {
     Q_OBJECT
 
   public:

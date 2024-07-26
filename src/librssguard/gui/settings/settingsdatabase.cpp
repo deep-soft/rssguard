@@ -5,8 +5,9 @@
 #include "database/databasefactory.h"
 #include "database/mariadbdriver.h"
 #include "definitions/definitions.h"
-#include "gui/guiutilities.h"
 #include "miscellaneous/application.h"
+#include "miscellaneous/iconfactory.h"
+#include "miscellaneous/settings.h"
 
 SettingsDatabase::SettingsDatabase(Settings* settings, QWidget* parent)
   : SettingsPanel(settings, parent), m_ui(new Ui::SettingsDatabase) {
@@ -86,6 +87,10 @@ SettingsDatabase::SettingsDatabase(Settings* settings, QWidget* parent)
 
 SettingsDatabase::~SettingsDatabase() {
   delete m_ui;
+}
+
+QIcon SettingsDatabase::icon() const {
+  return qApp->icons()->fromTheme(QSL("folder-database"), QSL("libreoffice-database"));
 }
 
 void SettingsDatabase::mysqlTestConnection() {

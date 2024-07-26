@@ -26,12 +26,16 @@ void AccountCheckModel::setRootItem(RootItem* root_item, bool delete_previous_ro
     emit layoutAboutToBeChanged();
   }
 
+  beginResetModel();
+
   if (delete_previous_root && m_rootItem != nullptr) {
     m_rootItem->deleteLater();
   }
 
   m_checkStates.clear();
   m_rootItem = root_item;
+
+  endResetModel();
 
   if (with_layout_change) {
     emit layoutChanged();
@@ -42,7 +46,7 @@ void AccountCheckModel::checkAllItems() {
   if (m_rootItem != nullptr) {
     auto chi = m_rootItem->childItems();
 
-    for (RootItem* root_child : qAsConst(chi)) {
+    for (RootItem* root_child : std::as_const(chi)) {
       if (root_child->kind() == RootItem::Kind::Feed || root_child->kind() == RootItem::Kind::Category) {
         setItemChecked(root_child, Qt::CheckState::Checked);
       }
@@ -54,7 +58,7 @@ void AccountCheckModel::uncheckAllItems() {
   if (m_rootItem != nullptr) {
     auto chi = m_rootItem->childItems();
 
-    for (RootItem* root_child : qAsConst(chi)) {
+    for (RootItem* root_child : std::as_const(chi)) {
       if (root_child->kind() == RootItem::Kind::Feed || root_child->kind() == RootItem::Kind::Category) {
         setData(indexForItem(root_child), Qt::CheckState::Unchecked, Qt::ItemDataRole::CheckStateRole);
       }
@@ -64,7 +68,7 @@ void AccountCheckModel::uncheckAllItems() {
 
 QModelIndex AccountCheckModel::index(int row, int column, const QModelIndex& parent) const {
   if (!hasIndex(row, column, parent)) {
-    return QModelIndex();
+    return {};
   }
 
   RootItem* parent_item = itemForIndex(parent);
@@ -74,7 +78,7 @@ QModelIndex AccountCheckModel::index(int row, int column, const QModelIndex& par
     return createIndex(row, column, child_item);
   }
   else {
-    return QModelIndex();
+    return {};
   }
 }
 
@@ -121,14 +125,14 @@ QModelIndex AccountCheckModel::indexForItem(RootItem* item) const {
 
 QModelIndex AccountCheckModel::parent(const QModelIndex& child) const {
   if (!child.isValid()) {
-    return QModelIndex();
+    return {};
   }
 
   RootItem* child_item = itemForIndex(child);
   RootItem* parent_item = child_item->parent();
 
-  if (parent_item == m_rootItem) {
-    return QModelIndex();
+  if (parent_item == m_rootItem || parent_item == nullptr) {
+    return {};
   }
   else {
     return createIndex(parent_item->row(), 0, parent_item);
@@ -215,7 +219,7 @@ bool AccountCheckModel::setData(const QModelIndex& index, const QVariant& value,
     // Set new data for all descendants of this actual item.
     auto chi = item->childItems();
 
-    for (RootItem* child : qAsConst(chi)) {
+    for (RootItem* child : std::as_const(chi)) {
       setData(indexForItem(child), value, Qt::CheckStateRole);
     }
 
@@ -234,7 +238,7 @@ bool AccountCheckModel::setData(const QModelIndex& index, const QVariant& value,
       bool all_unchecked = true;
       auto childr = item->childItems();
 
-      for (RootItem* child_of_parent : qAsConst(childr)) {
+      for (RootItem* child_of_parent : std::as_const(childr)) {
         if (m_checkStates.contains(child_of_parent)) {
           all_checked &= m_checkStates[child_of_parent] == Qt::CheckState::Checked;
           all_unchecked &= m_checkStates[child_of_parent] == Qt::CheckState::Unchecked;

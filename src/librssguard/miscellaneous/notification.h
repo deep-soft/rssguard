@@ -3,9 +3,9 @@
 #ifndef NOTIFICATION_H
 #define NOTIFICATION_H
 
-#include <QString>
-
 #include "definitions/definitions.h"
+
+#include <QString>
 
 class Application;
 
@@ -74,5 +74,7 @@ class Notification {
     QString m_soundPath;
     qreal m_volume;
 };
+
+Q_DECLARE_METATYPE(Notification::Event)
 
 #endif // NOTIFICATION_H

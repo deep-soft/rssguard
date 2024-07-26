@@ -3,14 +3,14 @@
 #ifndef NOTIFICATIONFACTORY_H
 #define NOTIFICATIONFACTORY_H
 
-#include <QObject>
-
 #include "miscellaneous/notification.h"
+
+#include <QObject>
 
 class Settings;
 
 class NotificationFactory : public QObject {
-  Q_OBJECT
+    Q_OBJECT
 
   public:
     explicit NotificationFactory(QObject* parent = nullptr);
@@ -18,15 +18,16 @@ class NotificationFactory : public QObject {
     QList<Notification> allNotifications() const;
     Notification notificationForEvent(Notification::Event event) const;
 
-  public slots:
+    // Determines whether balloon tips are enabled or not.
+    bool areNotificationsEnabled() const;
+    bool useToastNotifications() const;
 
-    // Load saved notifications from settings
+  public slots:
     void load(Settings* settings);
     void save(const QList<Notification>& new_notifications, Settings* settings);
 
   private:
     QList<Notification> m_notifications = {};
-
 };
 
 #endif // NOTIFICATIONFACTORY_H

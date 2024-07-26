@@ -3,9 +3,9 @@
 #ifndef FORMADDEDITPROBE_H
 #define FORMADDEDITPROBE_H
 
-#include <QDialog>
-
 #include "ui_formaddeditprobe.h"
+
+#include <QDialog>
 
 namespace Ui {
   class FormAddEditProbe;
@@ -13,7 +13,7 @@ namespace Ui {
 
 class Search;
 
-class FormAddEditProbe : public QDialog {
+class RSSGUARD_DLLSPEC FormAddEditProbe : public QDialog {
     Q_OBJECT
 
   public:

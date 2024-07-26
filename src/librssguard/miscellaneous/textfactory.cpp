@@ -2,11 +2,13 @@
 
 #include "miscellaneous/textfactory.h"
 
+#include "3rd-party/boolinq/boolinq.h"
 #include "3rd-party/sc/simplecrypt.h"
 #include "definitions/definitions.h"
 #include "exceptions/applicationexception.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iofactory.h"
+#include "miscellaneous/settings.h"
 
 #include <QDir>
 #include <QLocale>
@@ -37,10 +39,17 @@ QColor TextFactory::generateColorFromText(const QString& text) {
     color += chr.unicode();
   }
 
-  color = QRandomGenerator(color).bounded(double(0xFFFFFF)) - 1;
-  auto color_name = QSL("#%1").arg(color, 6, 16);
+  // NOTE: https://martin.ankerl.com/2009/12/09/how-to-create-random-colors-programmatically
+  int hue = color % 360;
 
-  return QColor(color_name);
+  return QColor::fromHsv(hue, 200, 240);
+}
+
+QColor TextFactory::generateRandomColor() {
+  int hue = QRandomGenerator::global()->generate() % 360;
+  auto clr = QColor::fromHsv(hue, 200, 240);
+
+  return clr;
 }
 
 int TextFactory::stringHeight(const QString& string, const QFontMetrics& metrics) {
@@ -68,62 +77,56 @@ bool TextFactory::couldBeHtml(const QString& string) {
   const QString sstring = string.simplified();
 
   return sstring.startsWith(QL1S("<!")) || sstring.startsWith(QL1S("<html")) || sstring.startsWith(QL1S("<figure")) ||
-         sstring.startsWith(QL1S("<article")) || Qt::mightBeRichText(sstring);
+         sstring.startsWith(QL1S("<article")) || sstring.startsWith(QL1S("<details")) ||
+         sstring.startsWith(QL1S("<aside")) || Qt::mightBeRichText(sstring);
 }
 
-QDateTime TextFactory::parseDateTime(const QString& date_time) {
-  const QString input_date = date_time.simplified();
+QDateTime TextFactory::parseDateTime(const QString& date_time, QString* used_dt_format) {
+  QString input_date = date_time.simplified()
+                         .replace(QSL("GMT"), QSL("+0000"))
+                         .replace(QSL("UTC"), QSL("+0000"))
+                         .replace(QSL("EDT"), QSL("-0400"))
+                         .replace(QSL("EST"), QSL("-0500"))
+                         .replace(QSL("PDT"), QSL("-0700"))
+                         .replace(QSL("PST"), QSL("-0800"))
+                         .replace(QRegularExpression(QSL("\\.(\\d{3})\\d{3}")), QSL(".\\1"));
+
+  if (input_date.isEmpty()) {
+    return QDateTime();
+  }
+
+  QLocale locale(QLocale::Language::C);
   QDateTime dt;
-  QTime time_zone_offset;
-  const QLocale locale(QLocale::Language::C);
-  bool positive_time_zone_offset = false;
-  static QStringList date_patterns = dateTimePatterns();
-  QStringList timezone_offset_patterns;
+  QStringList date_patterns = dateTimePatterns(true);
 
-  timezone_offset_patterns << QSL("+hh:mm") << QSL("-hh:mm") << QSL("+hhmm") << QSL("-hhmm") << QSL("+hh")
-                           << QSL("-hh");
+  if (used_dt_format != nullptr && !used_dt_format->isEmpty()) {
+    date_patterns.prepend(*used_dt_format);
+  }
 
-  // Iterate over patterns and check if input date/time matches the pattern.
-  for (const QString& pattern : qAsConst(date_patterns)) {
-    dt = locale.toDateTime(input_date.left(pattern.size()), pattern);
+  // QDateTime dt1 = locale.toDateTime("GMT", "t");
+  // QString dt2 = dt1.toString();
+
+  for (const QString& pattern : std::as_const(date_patterns)) {
+#if QT_VERSION >= 0x060700 // Qt >= 6.7.0
+    dt = locale.toDateTime(input_date, pattern, 2000);
+#else
+    dt = locale.toDateTime(input_date, pattern);
+#endif
 
     if (dt.isValid()) {
       // Make sure that this date/time is considered UTC.
-      dt.setTimeSpec(Qt::TimeSpec::UTC);
+      dt = dt.toUTC();
 
-      // We find offset from UTC.
-      if (input_date.size() >= TIMEZONE_OFFSET_LIMIT) {
-        QString offset_sanitized = input_date.mid(pattern.size()).replace(QL1S(" "), QString());
-
-        for (const QString& pattern_t : qAsConst(timezone_offset_patterns)) {
-          time_zone_offset = QTime::fromString(offset_sanitized.left(pattern_t.size()), pattern_t);
-
-          if (time_zone_offset.isValid()) {
-            positive_time_zone_offset = pattern_t.at(0) == QL1C('+');
-            break;
-          }
-        }
+      if (used_dt_format != nullptr) {
+        used_dt_format->clear();
+        used_dt_format->append(pattern);
       }
 
-      if (time_zone_offset.isValid()) {
-        // Time zone offset was detected.
-        if (positive_time_zone_offset) {
-          // Offset is positive, so we have to subtract it to get
-          // the original UTC.
-          return dt.addSecs(-QTime(0, 0, 0, 0).secsTo(time_zone_offset));
-        }
-        else {
-          // Vice versa.
-          return dt.addSecs(QTime(0, 0, 0, 0).secsTo(time_zone_offset));
-        }
-      }
-      else {
-        return dt;
-      }
+      return dt;
     }
   }
 
-  // Parsing failed, return invalid datetime.
+  qCriticalNN << LOGSEC_CORE << "Date/time string NOT recognized:" << QUOTE_W_SPACE_DOT(input_date);
   return QDateTime();
 }
 
@@ -131,13 +134,60 @@ QDateTime TextFactory::parseDateTime(qint64 milis_from_epoch) {
   return QDateTime::fromMSecsSinceEpoch(milis_from_epoch, Qt::TimeSpec::UTC);
 }
 
-QStringList TextFactory::dateTimePatterns() {
-  return QStringList() << QSL("yyyy-MM-ddTHH:mm:ss") << QSL("MMM dd yyyy hh:mm:ss") << QSL("MMM d yyyy hh:mm:ss")
-                       << QSL("ddd, dd MMM yyyy HH:mm:ss") << QSL("ddd, d MMM yyyy HH:mm:ss")
-                       << QSL("dd MMM yyyy hh:mm:ss") << QSL("dd MMM yyyy") << QSL("yyyy-MM-dd HH:mm:ss.z")
-                       << QSL("yyyy-MM-dd") << QSL("yyyy") << QSL("yyyy-MM") << QSL("yyyy-MM-dd")
-                       << QSL("yyyy-MM-ddThh:mm") << QSL("yyyy-MM-ddThh:mm:ss") << QSL("d MMM yyyy HH:mm:ss")
-                       << QSL("hh:mm:ss") << QSL("h:m:s AP") << QSL("h:mm") << QSL("H:mm") << QSL("h:m") << QSL("h.m");
+QStringList TextFactory::dateTimePatterns(bool with_tzs) {
+  QStringList pat;
+
+  pat << QSL("yyyy-MM-ddTHH:mm:ss");
+  pat << QSL("yyyy-MM-ddTHH:mm:ss.z");
+  pat << QSL("yyyy-MM-ddTHH:mm:ss.zzz");
+  pat << QSL("yyyy-MM-ddThh:mm:ss");
+  pat << QSL("yyyy-MM-dd HH:mm:ss.z");
+
+  pat << QSL("yyyy-MM-ddThh:mm");
+
+  pat << QSL("yyyyMMddThhmmss");
+  pat << QSL("yyyyMMdd");
+  pat << QSL("yyyy");
+
+  pat << QSL("yyyy-MM-dd");
+  pat << QSL("yyyy-MM");
+
+  pat << QSL("MMM dd yyyy hh:mm:ss");
+  pat << QSL("MMM d yyyy hh:mm:ss");
+
+  pat << QSL("ddd, dd MMM yyyy HH:mm:ss");
+  pat << QSL("ddd, dd MMM yyyy HH:mm");
+  pat << QSL("ddd, dd MMM yy HH:mm:ss");
+  pat << QSL("ddd, dd MMMM yyyy HH:mm:ss");
+  pat << QSL("ddd, d MMM yyyy HH:mm:ss");
+
+  pat << QSL("ddd, MM/dd/yyyy - HH:mm");
+
+  pat << QSL("dd MMM yyyy hh:mm:ss");
+  pat << QSL("dd MMM yyyy hh:mm");
+  pat << QSL("dd MMM yyyy");
+
+  pat << QSL("d MMM yyyy HH:mm:ss");
+
+  pat << QSL("dd-MM-yyyy - HH:mm");
+
+  pat << QSL("hh:mm:ss");
+  pat << QSL("h:m:s");
+  pat << QSL("h:mm");
+  pat << QSL("H:mm");
+  pat << QSL("h:m");
+  pat << QSL("h.m");
+
+  if (with_tzs) {
+    for (int i = 0; i < pat.size(); i += 3) {
+      QString base_pattern = pat.value(i);
+
+      pat.insert(i + 1, base_pattern + QSL("t"));
+      pat.insert(i + 2, base_pattern + QSL(" t"));
+    }
+  }
+
+  return pat;
 }
 
 QString TextFactory::encrypt(const QString& text, quint64 key) {
@@ -167,45 +217,169 @@ QString TextFactory::capitalizeFirstLetter(const QString& sts) {
   }
 }
 
-QStringList TextFactory::tokenizeProcessArguments(QStringView command) {
+enum class TokenState {
+  // We are not inside argument, we are between arguments.
+  Normal,
+
+  // We have detected escape "\" character coming from double-quoted argument.
+  EscapedFromDoubleQuotes,
+
+  // We have detected escape "\" character coming from spaced argument.
+  EscapedFromSpaced,
+
+  // We are inside argument which was separated by spaces.
+  InsideArgSpaced,
+
+  // We are inside argument.
+  InsideArgDoubleQuotes,
+
+  // We are inside argument, do not evaluate anything, just take it all
+  // as arw text.
+  InsideArgSingleQuotes
+};
+
+QStringList TextFactory::tokenizeProcessArguments(const QString& command) {
+  // Each argument containing spaces must be enclosed with single '' or double "" quotes.
+  // Some characters must be escaped with \ to keep their textual values as
+  // long as double-quoted argument is used.
+
+  if (command.isEmpty()) {
+    return {};
+  }
+
+  // We append space to end of command to make sure that
+  // ending space-separated argument is processed.
+  QString my_command = command + u' ';
+
+  TokenState state = TokenState::Normal;
   QStringList args;
-  QString tmp;
-  int quote_count = 0;
-  bool in_quote = false;
+  QString arg;
 
-  for (int i = 0; i < command.size(); ++i) {
-    if (command.at(i) == QL1C('"')) {
-      ++quote_count;
+  for (QChar chr : my_command) {
+    switch (state) {
+      case TokenState::Normal: {
+        switch (chr.unicode()) {
+          case u'"':
+            // We start double-quoted argument.
+            state = TokenState::InsideArgDoubleQuotes;
+            continue;
 
-      if (quote_count == 3) {
-        quote_count = 0;
-        tmp += command.at(i);
+          case u'\'':
+            // We start single-quoted argument.
+            state = TokenState::InsideArgSingleQuotes;
+            continue;
+
+          case u' ':
+            // Whitespace, just go on.
+            continue;
+
+          default:
+            // We found some actual text which marks
+            // beginning of argument, we assume spaced argument.
+            arg.append(chr);
+            state = TokenState::InsideArgSpaced;
+            continue;
+        }
+
+        break;
       }
 
-      continue;
-    }
-
-    if (quote_count) {
-      if (quote_count == 1) {
-        in_quote = !in_quote;
+      case TokenState::EscapedFromDoubleQuotes: {
+        // Previous character was "\".
+        arg.append(chr);
+        state = TokenState::InsideArgDoubleQuotes;
+        break;
       }
 
-      quote_count = 0;
-    }
-
-    if (!in_quote && command.at(i).isSpace()) {
-      if (!tmp.isEmpty()) {
-        args += tmp;
-        tmp.clear();
+      case TokenState::EscapedFromSpaced: {
+        // Previous character was "\".
+        arg.append(chr);
+        state = TokenState::InsideArgSpaced;
+        break;
       }
-    }
-    else {
-      tmp += command.at(i);
+
+      case TokenState::InsideArgSpaced: {
+        switch (chr.unicode()) {
+            // NOTE: Probably disable escaping in spaced arguments to provide simpler UX?
+            /*
+            case u'\\':
+              // We found escaped!
+              state = TokenState::EscapedFromSpaced;
+              continue;
+            */
+
+          case u' ':
+            // We need to end this argument.
+            args.append(arg);
+            arg.clear();
+            state = TokenState::Normal;
+            continue;
+
+          default:
+            arg.append(chr);
+            break;
+        }
+
+        break;
+      }
+
+      case TokenState::InsideArgDoubleQuotes: {
+        switch (chr.unicode()) {
+          case u'\\':
+            // We found escaped!
+            state = TokenState::EscapedFromDoubleQuotes;
+            continue;
+
+          case u'"':
+            // We need to end this argument.
+            args.append(arg);
+            arg.clear();
+            state = TokenState::Normal;
+            continue;
+
+          default:
+            arg.append(chr);
+            break;
+        }
+
+        break;
+      }
+
+      case TokenState::InsideArgSingleQuotes: {
+        switch (chr.unicode()) {
+          case u'\'':
+            // We need to end this argument.
+            args.append(arg);
+            arg.clear();
+            state = TokenState::Normal;
+            continue;
+
+          default:
+            arg.append(chr);
+            break;
+        }
+
+        break;
+      }
     }
   }
 
-  if (!tmp.isEmpty()) {
-    args += tmp;
+  switch (state) {
+    case TokenState::EscapedFromSpaced:
+    case TokenState::EscapedFromDoubleQuotes:
+      throw ApplicationException(QObject::tr("escape sequence not completed"));
+      break;
+
+    case TokenState::InsideArgDoubleQuotes:
+      throw ApplicationException(QObject::tr("closing \" is missing"));
+      break;
+
+    case TokenState::InsideArgSingleQuotes:
+      throw ApplicationException(QObject::tr("closing ' is missing"));
+      break;
+
+    default:
+      break;
   }
 
   return args;

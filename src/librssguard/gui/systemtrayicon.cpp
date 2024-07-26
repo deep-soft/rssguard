@@ -4,7 +4,6 @@
 
 #include "definitions/definitions.h"
 #include "gui/dialogs/formmain.h"
-#include "gui/dialogs/formsettings.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/settings.h"
 
@@ -65,10 +64,6 @@ bool SystemTrayIcon::isSystemTrayAreaAvailable() {
 
 bool SystemTrayIcon::isSystemTrayDesired() {
   return qApp->settings()->value(GROUP(GUI), SETTING(GUI::UseTrayIcon)).toBool();
-}
-
-bool SystemTrayIcon::areNotificationsEnabled() {
-  return qApp->settings()->value(GROUP(GUI), SETTING(GUI::EnableNotifications)).toBool();
 }
 
 void SystemTrayIcon::showPrivate() {

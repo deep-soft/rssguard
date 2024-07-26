@@ -2,10 +2,8 @@
 
 #include "network-web/cookiejar.h"
 
-#include "3rd-party/boolinq/boolinq.h"
 #include "definitions/definitions.h"
 #include "miscellaneous/application.h"
-#include "miscellaneous/iofactory.h"
 #include "miscellaneous/settings.h"
 #include "network-web/webfactory.h"
 
@@ -14,13 +12,14 @@
 #include <QNetworkCookie>
 #include <QSettings>
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 #include <QWebEngineCookieStore>
+#include <QWebEngineProfile>
 #endif
 
 CookieJar::CookieJar(QObject* parent)
   : QNetworkCookieJar(parent), m_saver(AutoSaver(this, QSL("saveCookies"), 30, 45)) {
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
   auto* web_factory = qobject_cast<WebFactory*>(parent);
 
   if (web_factory != nullptr) {
@@ -36,7 +35,7 @@ CookieJar::CookieJar(QObject* parent)
   updateSettings();
   loadCookies();
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
   // When cookies change in WebEngine, then change in main cookie jar too.
   //
   // Also, the synchronization between WebEngine cookie jar and main cookie jar is this:
@@ -84,7 +83,7 @@ void CookieJar::loadCookies() {
   Settings* sett = qApp->settings();
   auto keys = sett->allKeys(GROUP(Cookies));
 
-  for (const QString& cookie_key : qAsConst(keys)) {
+  for (const QString& cookie_key : std::as_const(keys)) {
     QByteArray encoded = sett->password(GROUP(Cookies), cookie_key, {}).toByteArray();
 
     if (!encoded.isEmpty()) {
@@ -110,9 +109,9 @@ void CookieJar::saveCookies() {
   sett->endGroup();
 
   for (const QNetworkCookie& cookie : cookies) {
-    if (cookie.isSessionCookie()) {
+    /*if (cookie.isSessionCookie()) {
       continue;
-    }
+    }*/
     sett->setPassword(GROUP(Cookies),
                       QSL("%1-%2").arg(QString::number(i++), QString::fromUtf8(cookie.name())),
                       cookie.toRawForm(QNetworkCookie::RawForm::Full));
@@ -138,7 +137,7 @@ bool CookieJar::insertCookieInternal(const QNetworkCookie& cookie, bool notify_o
       // saveCookies();
     }
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     if (notify_others) {
       m_webEngineCookies->setCookie(cookie);
     }
@@ -157,7 +156,7 @@ bool CookieJar::updateCookieInternal(const QNetworkCookie& cookie, bool notify_o
     m_saver.changeOccurred();
     // saveCookies();
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     if (notify_others) {
       m_webEngineCookies->setCookie(cookie);
     }
@@ -176,7 +175,7 @@ bool CookieJar::deleteCookieInternal(const QNetworkCookie& cookie, bool notify_o
     m_saver.changeOccurred();
     // saveCookies();
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     if (notify_others) {
       m_webEngineCookies->deleteCookie(cookie);
     }

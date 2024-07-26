@@ -126,6 +126,8 @@
     <addaction name="separator"/>
     <addaction name="m_menuAddItem"/>
     <addaction name="m_actionEditSelectedItem"/>
+    <addaction name="m_actionEditChildFeeds"/>
+    <addaction name="m_actionEditChildFeedsRecursive"/>
     <addaction name="m_actionDeleteSelectedItem"/>
     <addaction name="separator"/>
     <addaction name="m_actionSortFeedsAlphabetically"/>
@@ -146,7 +148,6 @@
     <addaction name="m_actionClearAllItems"/>
     <addaction name="separator"/>
     <addaction name="m_actionCopyUrlSelectedFeed"/>
-    <addaction name="m_actionViewSelectedItemsNewspaperMode"/>
     <addaction name="m_actionMarkSelectedItemsAsRead"/>
     <addaction name="m_actionMarkSelectedItemsAsUnread"/>
     <addaction name="m_actionClearSelectedItems"/>
@@ -160,6 +161,7 @@
     <addaction name="m_actionOpenSelectedSourceArticlesExternally"/>
     <addaction name="m_actionOpenSelectedMessagesInternally"/>
     <addaction name="m_actionOpenSelectedMessagesInternallyNoTab"/>
+    <addaction name="m_actionPlaySelectedArticlesInMediaPlayer"/>
     <addaction name="m_actionSendMessageViaEmail"/>
     <addaction name="m_actionMessagePreviewEnabled"/>
     <addaction name="separator"/>
@@ -297,15 +299,12 @@
   </action>
   <action name="m_actionEditSelectedItem">
    <property name="text">
-    <string>&amp;Edit selected item</string>
-   </property>
-   <property name="shortcut">
-    <string notr="true"/>
+    <string>&amp;Edit selected items</string>
    </property>
   </action>
   <action name="m_actionDeleteSelectedItem">
    <property name="text">
-    <string>&amp;Delete selected item</string>
+    <string>&amp;Delete selected items</string>
    </property>
    <property name="shortcut">
     <string notr="true"/>
@@ -346,7 +345,7 @@
   </action>
   <action name="m_actionMarkSelectedItemsAsRead">
    <property name="text">
-    <string>Mark selected item &amp;read</string>
+    <string>Mark selected items &amp;read</string>
    </property>
    <property name="toolTip">
     <string>Mark all messages (without message filters) from selected items as read.</string>
@@ -357,7 +356,7 @@
   </action>
   <action name="m_actionMarkSelectedItemsAsUnread">
    <property name="text">
-    <string>Mark selected item &amp;unread</string>
+    <string>Mark selected items &amp;unread</string>
    </property>
    <property name="toolTip">
     <string>Mark all messages (without message filters) from selected items as unread.</string>
@@ -376,7 +375,7 @@
   </action>
   <action name="m_actionClearSelectedItems">
    <property name="text">
-    <string>&amp;Clean selected item</string>
+    <string>&amp;Clean selected items</string>
    </property>
    <property name="toolTip">
     <string>Deletes all messages from selected items.</string>
@@ -427,17 +426,6 @@
    </property>
    <property name="toolTip">
     <string>Marks all messages in all items read. This does not take message filters into account.</string>
-   </property>
-   <property name="shortcut">
-    <string notr="true"/>
-   </property>
-  </action>
-  <action name="m_actionViewSelectedItemsNewspaperMode">
-   <property name="text">
-    <string>View selected item in &amp;newspaper mode</string>
-   </property>
-   <property name="toolTip">
-    <string>Displays all messages from selected item in a new &quot;newspaper mode&quot; tab. Note that messages are not set as read automatically.</string>
    </property>
    <property name="shortcut">
     <string notr="true"/>
@@ -935,6 +923,32 @@
   <action name="m_actionCleanupWebCache">
    <property name="text">
     <string>Cleanup web cac&amp;he</string>
+   </property>
+  </action>
+  <action name="m_actionNoAccounts">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>You must add new account first</string>
+   </property>
+   <property name="toolTip">
+    <string>You must add new account first.</string>
+   </property>
+  </action>
+  <action name="m_actionEditChildFeeds">
+   <property name="text">
+    <string>Edit &amp;child feeds</string>
+   </property>
+  </action>
+  <action name="m_actionEditChildFeedsRecursive">
+   <property name="text">
+    <string>Edit child feeds (&amp;recursive)</string>
+   </property>
+  </action>
+  <action name="m_actionPlaySelectedArticlesInMediaPlayer">
+   <property name="text">
+    <string>Play in &amp;media player</string>
    </property>
   </action>
  </widget>

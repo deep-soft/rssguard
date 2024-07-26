@@ -3,15 +3,14 @@
 #ifndef MESSAGESMODEL_H
 #define MESSAGESMODEL_H
 
-#include "core/messagesmodelsqllayer.h"
-#include <QSqlQueryModel>
-
 #include "core/message.h"
+#include "core/messagesmodelsqllayer.h"
 #include "definitions/definitions.h"
 #include "services/abstract/rootitem.h"
 
 #include <QFont>
 #include <QIcon>
+#include <QSqlQueryModel>
 
 class MessagesView;
 class MessagesModelCache;
@@ -22,9 +21,17 @@ class MessagesModel : public QSqlQueryModel, public MessagesModelSqlLayer {
   public:
     // Enum which describes basic highlighting schemes
     // for messages.
-    enum class MessageHighlighter { NoHighlighting = 1, HighlightUnread = 2, HighlightImportant = 4 };
+    enum class MessageHighlighter {
+      NoHighlighting = 1,
+      HighlightUnread = 2,
+      HighlightImportant = 4
+    };
 
-    enum class MessageUnreadIcon { Dot = 1, Envelope = 2, FeedIcon = 3 };
+    enum class MessageUnreadIcon {
+      Dot = 1,
+      Envelope = 2,
+      FeedIcon = 3
+    };
 
     Q_ENUM(MessageUnreadIcon)
 
@@ -34,16 +41,14 @@ class MessagesModel : public QSqlQueryModel, public MessagesModelSqlLayer {
 
     // Fetches ALL available data to the model.
     // NOTE: This activates the SQL query and populates the model with new data.
-    void repopulate();
+    void repopulate(int additional_article_id = 0);
 
     // Model implementation.
-    bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole);
+    bool setData(const QModelIndex& idx, const QVariant& value, int role = Qt::EditRole);
     QVariant data(const QModelIndex& idx, int role = Qt::DisplayRole) const;
     QVariant data(int row, int column, int role = Qt::DisplayRole) const;
     QVariant headerData(int section, Qt::Orientation orientation, int role) const;
     Qt::ItemFlags flags(const QModelIndex& index) const;
-
-    // Returns message at given index.
 
     QList<Message> messagesAt(const QList<int>& row_indices) const;
     Message messageAt(int row_index) const;
@@ -99,6 +104,7 @@ class MessagesModel : public QSqlQueryModel, public MessagesModelSqlLayer {
     MessageHighlighter m_messageHighlighter;
     QString m_customDateFormat;
     QString m_customTimeFormat;
+    QString m_customFormatForDatesOnly;
     int m_newerArticlesRelativeTime;
     RootItem* m_selectedItem;
     QList<QString> m_headerData;

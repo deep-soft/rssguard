@@ -10,7 +10,7 @@
     <height>263</height>
    </rect>
   </property>
-  <layout class="QHBoxLayout" name="horizontalLayout">
+  <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <widget class="QTreeWidget" name="m_treeLanguages">
      <property name="editTriggers">
@@ -36,8 +36,22 @@
      </attribute>
     </widget>
    </item>
+   <item>
+    <widget class="LabelWithStatus" name="m_lblAuthors" native="true"/>
+   </item>
+   <item>
+    <widget class="QLabel" name="m_lblHelp"/>
+   </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>LabelWithStatus</class>
+   <extends>QWidget</extends>
+   <header>labelwithstatus.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

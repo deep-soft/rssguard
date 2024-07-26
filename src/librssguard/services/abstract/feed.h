@@ -3,21 +3,41 @@
 #ifndef FEED_H
 #define FEED_H
 
-#include "services/abstract/rootitem.h"
-
 #include "core/message.h"
 #include "core/messagefilter.h"
+#include "services/abstract/rootitem.h"
 
 #include <QPointer>
 #include <QVariant>
 
 // Base class for "feed" nodes.
-class Feed : public RootItem {
+class RSSGUARD_DLLSPEC Feed : public RootItem {
     Q_OBJECT
 
   public:
+    struct ArticleIgnoreLimit {
+        // Ignoring articles.
+        bool m_avoidOldArticles = false;
+        bool m_addAnyArticlesToDb = false;
+        QDateTime m_dtToAvoid = QDateTime();
+        int m_hoursToAvoid = 0;
+
+        // Limitting articles.
+        bool m_customizeLimitting = false;
+        int m_keepCountOfArticles = 0;
+        bool m_doNotRemoveStarred = true;
+        bool m_doNotRemoveUnread = true;
+        bool m_moveToBinDontPurge = false;
+
+        static ArticleIgnoreLimit fromSettings();
+    };
+
     // Specifies the auto-download strategy for the feed.
-    enum class AutoUpdateType { DontAutoUpdate = 0, DefaultAutoUpdate = 1, SpecificAutoUpdate = 2 };
+    enum class AutoUpdateType {
+      DontAutoUpdate = 0,
+      DefaultAutoUpdate = 1,
+      SpecificAutoUpdate = 2
+    };
 
     // Specifies the actual "status" of the feed.
     // For example if it has new messages, error
@@ -28,7 +48,8 @@ class Feed : public RootItem {
       NetworkError = 2,
       AuthError = 3,
       ParsingError = 4,
-      OtherError = 5
+      OtherError = 5,
+      Fetching = 6
     };
 
     Q_ENUM(Status)
@@ -47,7 +68,7 @@ class Feed : public RootItem {
     virtual QVariantHash customDatabaseData() const;
     virtual void setCustomDatabaseData(const QVariantHash& data);
     virtual bool canBeEdited() const;
-    virtual bool editViaGui();
+    virtual bool isFetching() const;
     virtual QVariant data(int column, int role) const;
 
     void setCountOfAllMessages(int count_all_messages);
@@ -82,6 +103,16 @@ class Feed : public RootItem {
 
     QDateTime lastUpdated() const;
     void setLastUpdated(const QDateTime& last_updated);
+
+    bool isRtl() const;
+    void setIsRtl(bool rtl);
+
+    bool removeUnwantedArticles(QSqlDatabase& db);
+
+    ArticleIgnoreLimit& articleIgnoreLimit();
+    const ArticleIgnoreLimit& articleIgnoreLimit() const;
+    void setArticleIgnoreLimit(const ArticleIgnoreLimit& ignore_limit);
+
   public slots:
     virtual void updateCounts(bool including_total_count);
 
@@ -99,6 +130,14 @@ class Feed : public RootItem {
     bool m_isSwitchedOff;
     bool m_isQuiet;
     bool m_openArticlesDirectly;
+    bool m_isRtl;
+
+    // NOTE: These are used to filter out older articles
+    // than needed. Either absolute value is given (date/time)
+    // or relative value given in minutes.
+    // Amount
+    ArticleIgnoreLimit m_articleIgnoreLimit;
+
     int m_totalCount{};
     int m_unreadCount{};
     QList<QPointer<MessageFilter>> m_messageFilters;
@@ -106,5 +145,6 @@ class Feed : public RootItem {
 
 Q_DECLARE_METATYPE(Feed::AutoUpdateType)
 Q_DECLARE_METATYPE(Feed::Status)
+Q_DECLARE_METATYPE(Feed::ArticleIgnoreLimit)
 
 #endif // FEED_H

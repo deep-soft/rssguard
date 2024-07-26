@@ -3,9 +3,9 @@
 #ifndef FORMABOUT_H
 #define FORMABOUT_H
 
-#include <QDialog>
-
 #include "ui_formabout.h"
+
+#include <QDialog>
 
 class RSSGUARD_DLLSPEC FormAbout : public QDialog {
     Q_OBJECT
@@ -15,6 +15,7 @@ class RSSGUARD_DLLSPEC FormAbout : public QDialog {
     virtual ~FormAbout();
 
   private slots:
+    void copyInfoToClipboard();
     void displayLicense();
 
   private:

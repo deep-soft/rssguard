@@ -3,14 +3,13 @@
 #ifndef DOWNLOADER_H
 #define DOWNLOADER_H
 
-#include <QObject>
-
 #include "definitions/definitions.h"
 #include "network-web/httpresponse.h"
 
 #include <QHttpMultiPart>
 #include <QNetworkProxy>
 #include <QNetworkReply>
+#include <QObject>
 #include <QSslError>
 
 class SilentNetworkAccessManager;
@@ -27,10 +26,10 @@ class Downloader : public QObject {
     QByteArray lastOutputData() const;
     QNetworkReply::NetworkError lastOutputError() const;
     QList<HttpResponse> lastOutputMultipartData() const;
-    QVariant lastContentType() const;
+    QString lastContentType() const;
     QList<QNetworkCookie> lastCookies() const;
     int lastHttpStatusCode() const;
-    QList<QNetworkReply::RawHeaderPair> lastHeaders() const;
+    QMap<QString, QString> lastHeaders() const;
 
     void setProxy(const QNetworkProxy& proxy);
 
@@ -114,9 +113,9 @@ class Downloader : public QObject {
     QList<HttpResponse> m_lastOutputMultipartData;
     QNetworkReply::NetworkError m_lastOutputError;
     int m_lastHttpStatusCode;
-    QVariant m_lastContentType;
+    QString m_lastContentType;
     QList<QNetworkCookie> m_lastCookies;
-    QList<QNetworkReply::RawHeaderPair> m_lastHeaders;
+    QMap<QString, QString> m_lastHeaders;
 };
 
 #endif // DOWNLOADER_H

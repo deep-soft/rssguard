@@ -3,23 +3,19 @@
 #ifndef LOCALIZATION_H
 #define LOCALIZATION_H
 
-#include <QObject>
-
 #include <QLocale>
+#include <QObject>
 #include <QString>
 
 struct Language {
-  QString m_name;
-  QString m_code;
-  QString m_author;
-  QString m_email;
+    QString m_name;
+    QString m_code;
 };
 
 class RSSGUARD_DLLSPEC Localization : public QObject {
-  Q_OBJECT
+    Q_OBJECT
 
   public:
-
     // Constructor.
     explicit Localization(QObject* parent = nullptr);
 

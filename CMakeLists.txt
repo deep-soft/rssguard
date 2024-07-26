@@ -20,21 +20,31 @@
 #
 # Variables:
 #   BUILD_WITH_QT6 - Build either with Qt 6 or Qt 5.
+#   USE_SYSTEM_SQLITE - Use system-wide SQLite3 library and header file. Defaults to "ON".
 #   NO_UPDATE_CHECK - Disable automatic checking for new application updates.
 #   IS_FLATPAK_BUILD - Set to "ON" when building RSS Guard with Flatpak.
 #   FORCE_BUNDLE_ICONS - Forcibly bundles icons into executables.
-#   USE_WEBENGINE - if specified, then QtWebEngine module for internal web browser is used.
-#                   Otherwise simple text component is used and some features will be disabled.
-#                   Default value is "false". If QtWebEngine is installed during compilation, then
-#                   value of this variable is tweaked automatically.
-#   {FEEDLY,GMAIL,INOREADER}_CLIENT_ID - preconfigured OAuth cliend ID.
-#   {FEEDLY,GMAIL,INOREADER}_CLIENT_SECRET - preconfigured OAuth cliend SECRET.
+#   ENABLE_MEDIAPLAYER_QTMULTIMEDIA - Enable media player (QtMultimedia/ffmpeg implementation).
+#   ENABLE_MEDIAPLAYER_LIBMPV - Enable media player (libmpv implementation). Use "LibMPV_ROOT" variable to specify
+#                               base libmpv directory.
+#   MEDIAPLAYER_FORCE_OPENGL - When libmpv media player is enabled, then this forces it to use
+#                              its OpenGL renderer. This renderer is potentially faster, more modern
+#                              and supports wider range of platforms. Legacy "window-based" renderer
+#                              should be likely avoided in new codebases.
+#   ENABLE_COMPRESSED_SITEMAP - Set to "ON" if you want to enable support for "sitemap.xml.gz" format.
+#                               This requires "zlib" library and if you want to use specific
+#                               zlib location, then use "ZLIB_ROOT" variable, for example
+#                               -DZLIB_ROOT="C:\\zlib"
+#   NO_LITE - if specified, then QtWebEngine module for internal web browser is used
+#             and also other more demanding parts of application are used.
+#   {FEEDLY,GMAIL,INOREADER}_CLIENT_ID - preconfigured OAuth client ID.
+#   {FEEDLY,GMAIL,INOREADER}_CLIENT_SECRET - preconfigured OAuth client SECRET.
 #
 # Other information:
 #   - supports Windows, Linux, *BSD, macOS, OS/2, Android,
-#   - Qt 5.12.0 or newer is required,
+#   - Qt 5.14.0 or newer is required,
 #   - Qt 6.3.0 or newer is required,
-#   - cmake 3.9.0 or newer is required,
+#   - cmake 3.14.0 or newer is required,
 #   - if you wish to make packages for Windows, then you must initialize all submodules
 #     within repository before compilation,
 #   - C++ 17 is required.
@@ -54,7 +64,7 @@
 #
 #################################################################
 
-cmake_minimum_required(VERSION 3.9.0)
+cmake_minimum_required(VERSION 3.14.0)
 
 # Global variables describing the project.
 string(TIMESTAMP YEAR "%Y")
@@ -66,10 +76,10 @@ set(APP_AUTHOR "Martin Rotter")
 set(APP_COPYRIGHT "\\251 2011-${YEAR} ${APP_AUTHOR}")
 set(APP_REVERSE_NAME "io.github.martinrotter.rssguard")
 set(APP_DONATE_URL "https://github.com/sponsors/martinrotter")
-set(APP_VERSION "4.4.1")
+set(APP_VERSION "4.7.2")
 
 set(APP_URL "https://github.com/martinrotter/rssguard")
-set(APP_URL_DOCUMENTATION "https://github.com/martinrotter/rssguard/blob/${APP_VERSION}/resources/docs/Documentation.md")
+set(APP_URL_DOCUMENTATION "https://rssguard.readthedocs.io")
 set(APP_URL_ISSUES_NEW "https://github.com/martinrotter/rssguard/issues/new/choose")
 
 set(TYPEINFO "????")
@@ -98,7 +108,7 @@ if(APPLE)
   add_link_options(-stdlib=libc++)
 endif()
 
-if(${FORCE_COLORED_OUTPUT})
+if(FORCE_COLORED_OUTPUT)
   if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     add_compile_options(-fdiagnostics-color=always)
   elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
@@ -107,18 +117,23 @@ if(${FORCE_COLORED_OUTPUT})
 endif()
 
 # Global compilation switches.
-option(BUILD_WITH_QT6 "Build application with Qt 6" OFF)
-option(USE_WEBENGINE "Use QtWebEngine for embedded web browser" ON)
-option(UPDATE_TRANSLATIONS "Call lupdate to update translation files from source (Qt 6 only)" OFF)
-option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GCC/Clang only)" OFF)
-option(REVISION_FROM_GIT "Get revision using `git rev-parse`" ON)
-option(NO_UPDATE_CHECK "Disable automatic checking for new application updates" OFF)
+option(BUILD_WITH_QT6 "Build application with Qt 6." ON)
+option(USE_SYSTEM_SQLITE "Use system-wide SQLite3 library." ON)
+option(NO_LITE "Enable QtWebEngine and other more demanding components." ON)
+option(UPDATE_TRANSLATIONS "Call lupdate to update translation files from source (Qt 6 only)." OFF)
+option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GCC/Clang only)." OFF)
+option(REVISION_FROM_GIT "Get revision using `git rev-parse`." ON)
+option(NO_UPDATE_CHECK "Disable automatic checking for new application updates." OFF)
 option(IS_FLATPAK_BUILD "Set to 'ON' when building RSS Guard with Flatpak." OFF)
 option(FORCE_BUNDLE_ICONS "Forcibly bundle icon themes into RSS Guard." OFF)
+option(ENABLE_COMPRESSED_SITEMAP "Enable support for gzip-compressed sitemap feeds. Requires zlib." OFF)
+option(ENABLE_MEDIAPLAYER_QTMULTIMEDIA "Enable built-in media player. Requires QtMultimedia FFMPEG plugin." OFF)
+option(ENABLE_MEDIAPLAYER_LIBMPV "Enable built-in media player. Requires libmpv library." ON)
+option(MEDIAPLAYER_FORCE_OPENGL "Use opengl-based render API with libmpv." ON)
 
 # Import Qt libraries.
 set(QT6_MIN_VERSION 6.3.0)
-set(QT5_MIN_VERSION 5.12.0)
+set(QT5_MIN_VERSION 5.14.0)
 
 set(QT_COMPONENTS
   Core
@@ -132,17 +147,57 @@ set(QT_COMPONENTS
   Concurrent
 )
 
-if(NOT OS2)
-  list(APPEND QT_COMPONENTS Multimedia)
-endif()
-
 if(WIN32 AND NOT BUILD_WITH_QT6)
   list(APPEND QT_COMPONENTS WinExtras)
 endif()
 
-if(USE_WEBENGINE)
+if(NOT OS2)
+  list(APPEND QT_COMPONENTS Multimedia)
+endif()
+
+if(ENABLE_MEDIAPLAYER_QTMULTIMEDIA AND ENABLE_MEDIAPLAYER_LIBMPV)
+  message(FATAL_ERROR "You can only enable 1 media player backend.")
+endif()
+
+if(ENABLE_MEDIAPLAYER_QTMULTIMEDIA)
+  message(STATUS "Enabling QtMultimedia media player backend.")
+
+  list(APPEND QT_COMPONENTS OpenGL MultimediaWidgets)
+  add_compile_definitions(ENABLE_MEDIAPLAYER_QTMULTIMEDIA)
+endif()
+
+if(ENABLE_MEDIAPLAYER_LIBMPV)
+  message(STATUS "Enabling libmpv media player backend.")
+
+  if(WIN32 AND NOT LibMPV_ROOT)
+    set(LibMPV_ROOT "${CMAKE_SOURCE_DIR}/resources/scripts/libmpv")
+  endif()
+
+  if(MEDIAPLAYER_FORCE_OPENGL)
+    message(STATUS "Forcing OpenGL-based rendering for libmpv.")
+
+    list(APPEND QT_COMPONENTS OpenGL)
+
+    if(BUILD_WITH_QT6)
+      list(APPEND QT_COMPONENTS OpenGLWidgets)
+    endif()
+
+    add_compile_definitions(MEDIAPLAYER_LIBMPV_OPENGL)
+  endif()
+
+  add_compile_definitions(ENABLE_MEDIAPLAYER_LIBMPV)
+endif()
+
+if(ENABLE_MEDIAPLAYER_QTMULTIMEDIA OR ENABLE_MEDIAPLAYER_LIBMPV)
+  set(ENABLE_MEDIAPLAYER TRUE)
+  add_compile_definitions(ENABLE_MEDIAPLAYER)
+else()
+  message(STATUS "Media player feature is disabled.")
+endif()
+
+if(NO_LITE)
   list(APPEND QT_COMPONENTS WebEngineWidgets)
-  add_compile_definitions(USE_WEBENGINE)
+  add_compile_definitions(NO_LITE)
 endif()
 
 if(UNIX AND NOT APPLE AND NOT ANDROID)
@@ -190,13 +245,11 @@ if(REVISION_FROM_GIT AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
   )
 
   message(STATUS "Detected git revision: '${APP_REVISION}'.")
-else()
-  set(APP_REVISION "")
 endif()
 
-if(NOT USE_WEBENGINE)
+if(NOT NO_LITE)
   set(APP_REVERSE_NAME "io.github.martinrotter.rssguardlite")
-  set(APP_REVISION "${APP_REVISION}-nowebengine")
+  set(APP_REVISION "${APP_REVISION}-lite")
 endif()
 
 set(APP_LOW_NAME "${CMAKE_PROJECT_NAME}")
@@ -209,6 +262,16 @@ add_compile_definitions(
   APP_LONG_NAME="${APP_NAME} ${CMAKE_PROJECT_VERSION}"
   APP_LOW_NAME="${APP_LOW_NAME}"
   APP_REVERSE_NAME="${APP_REVERSE_NAME}"
+  APP_AUTHOR="${APP_AUTHOR}"
+  APP_DONATE_URL="${APP_DONATE_URL}"
+  APP_EMAIL="${APP_EMAIL}"
+  APP_LOW_H_NAME=".${CMAKE_PROJECT_NAME}"
+  APP_REVISION="${APP_REVISION}"
+  APP_SYSTEM_NAME="${CMAKE_SYSTEM_NAME}"
+  APP_SYSTEM_VERSION="${CMAKE_SYSTEM_PROCESSOR}"
+  APP_URL_DOCUMENTATION="${APP_URL_DOCUMENTATION}"
+  APP_URL_ISSUES_NEW="${APP_URL_ISSUES_NEW}"
+  APP_USERAGENT="${APP_NAME}/${CMAKE_PROJECT_VERSION}"
 
   QT_USE_QSTRINGBUILDER
   QT_USE_FAST_CONCATENATION
@@ -253,7 +316,18 @@ elseif(UNIX AND NOT ANDROID)
   )
 endif()
 
-# Generate localizations, build library and application.
+# Common libraries.
 add_subdirectory(src/librssguard)
 add_subdirectory(localization)
+
+# Plugins.
+add_subdirectory(src/librssguard-standard)
+add_subdirectory(src/librssguard-feedly)
+add_subdirectory(src/librssguard-gmail)
+add_subdirectory(src/librssguard-greader)
+add_subdirectory(src/librssguard-ttrss)
+add_subdirectory(src/librssguard-reddit)
+add_subdirectory(src/librssguard-nextcloud)
+
+# GUI executable.
 add_subdirectory(src/rssguard)

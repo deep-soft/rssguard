@@ -3,13 +3,13 @@
 #include "core/feeddownloader.h"
 
 #include "3rd-party/boolinq/boolinq.h"
-#include "core/feedsmodel.h"
 #include "core/messagefilter.h"
 #include "database/databasequeries.h"
 #include "definitions/definitions.h"
 #include "exceptions/feedfetchexception.h"
 #include "exceptions/filteringexception.h"
 #include "miscellaneous/application.h"
+#include "miscellaneous/settings.h"
 #include "services/abstract/cacheforserviceroot.h"
 #include "services/abstract/feed.h"
 #include "services/abstract/labelsnode.h"
@@ -211,6 +211,15 @@ void FeedDownloader::updateOneFeed(ServiceRoot* acc,
                                    Feed* feed,
                                    const QHash<ServiceRoot::BagOfMessages, QStringList>& stated_messages,
                                    const QHash<QString, QStringList>& tagged_messages) {
+  feed->setStatus(Feed::Status::Fetching);
+
+  const bool update_feed_list =
+    qApp->settings()->value(GROUP(Feeds), SETTING(Feeds::UpdateFeedListDuringFetching)).toBool();
+
+  if (update_feed_list) {
+    acc->itemChanged({feed});
+  }
+
   qlonglong thread_id = qlonglong(QThread::currentThreadId());
 
   qDebugNN << LOGSEC_FEEDDOWNLOADER << "Downloading new messages for feed ID" << QUOTE_W_SPACE(feed->customId())
@@ -238,6 +247,8 @@ void FeedDownloader::updateOneFeed(ServiceRoot* acc,
       msg.sanitize(feed, fix_future_datetimes);
     }
 
+    QMutexLocker lck(&m_mutexDb);
+
     if (!feed->messageFilters().isEmpty()) {
       tmr.restart();
 
@@ -255,8 +266,6 @@ void FeedDownloader::updateOneFeed(ServiceRoot* acc,
       QList<Message> read_msgs, important_msgs;
 
       for (int i = 0; i < msgs.size(); i++) {
-        QMutexLocker lck(&m_mutexDb);
-
         Message msg_original(msgs[i]);
         Message* msg_tweaked_by_filter = &msgs[i];
 
@@ -331,14 +340,14 @@ void FeedDownloader::updateOneFeed(ServiceRoot* acc,
         // and store the fact to server (of synchronized) and local DB later.
         // This is mainly because articles might not even be in DB yet.
         // So first insert articles, then update their label assignments etc.
-        for (Label* lbl : qAsConst(msg_original.m_assignedLabels)) {
+        for (Label* lbl : std::as_const(msg_original.m_assignedLabels)) {
           if (!msg_tweaked_by_filter->m_assignedLabels.contains(lbl)) {
             // Label is not there anymore, it was deassigned.
             msg_tweaked_by_filter->m_deassignedLabelsByFilter << lbl;
           }
         }
 
-        for (Label* lbl : qAsConst(msg_tweaked_by_filter->m_assignedLabels)) {
+        for (Label* lbl : std::as_const(msg_tweaked_by_filter->m_assignedLabels)) {
           if (!msg_original.m_assignedLabels.contains(lbl)) {
             // Label is in new message, but is not in old message, it
             // was newly assigned.
@@ -383,24 +392,25 @@ void FeedDownloader::updateOneFeed(ServiceRoot* acc,
     }
 
     removeDuplicateMessages(msgs);
+    removeTooOldMessages(feed, msgs);
 
     tmr.restart();
-    auto updated_messages = acc->updateMessages(msgs, feed, false, &m_mutexDb);
+    auto updated_messages = acc->updateMessages(msgs, feed, false, nullptr);
 
     qDebugNN << LOGSEC_FEEDDOWNLOADER << "Updating messages in DB took" << NONQUOTE_W_SPACE(tmr.nsecsElapsed() / 1000)
              << "microseconds.";
 
     if (feed->status() != Feed::Status::NewMessages) {
-      feed->setStatus(updated_messages.first > 0 || updated_messages.second > 0 ? Feed::Status::NewMessages
-                                                                                : Feed::Status::Normal);
+      feed->setStatus((!updated_messages.m_all.isEmpty() || !updated_messages.m_unread.isEmpty())
+                        ? Feed::Status::NewMessages
+                        : Feed::Status::Normal);
     }
 
-    qDebugNN << LOGSEC_FEEDDOWNLOADER << updated_messages << " messages for feed " << feed->customId()
-             << " stored in DB.";
+    qDebugNN << LOGSEC_FEEDDOWNLOADER << updated_messages.m_unread.size() << " unread messages and"
+             << NONQUOTE_W_SPACE(updated_messages.m_all.size()) "total messages for feed"
+             << QUOTE_W_SPACE(feed->customId()) << "stored in DB.";
 
-    if (updated_messages.first > 0) {
-      m_results.appendUpdatedFeed({feed, updated_messages.first});
-    }
+    m_results.appendUpdatedFeed(feed, updated_messages.m_unread);
   }
   catch (const FeedFetchException& feed_ex) {
     qCriticalNN << LOGSEC_NETWORK << "Error when fetching feed:" << QUOTE_W_SPACE(feed_ex.feedStatus())
@@ -415,6 +425,10 @@ void FeedDownloader::updateOneFeed(ServiceRoot* acc,
     feed->setStatus(Feed::Status::OtherError, app_ex.message());
   }
 
+  if (update_feed_list) {
+    acc->itemChanged({feed});
+  }
+
   qDebugNN << LOGSEC_FEEDDOWNLOADER << "Made progress in feed updates, total feeds count "
            << m_watcherLookup.progressValue() + 1 << "/" << m_feeds.size() << " (id of feed is " << feed->id() << ").";
 }
@@ -423,7 +437,6 @@ void FeedDownloader::finalizeUpdate() {
   qDebugNN << LOGSEC_FEEDDOWNLOADER << "Finished feed updates in thread"
            << QUOTE_W_SPACE_DOT(QThread::currentThreadId());
 
-  m_results.sort();
   m_feeds.clear();
 
   // Update of feeds has finished.
@@ -502,11 +515,57 @@ void FeedDownloader::removeDuplicateMessages(QList<Message>& messages) {
   }
 }
 
+void FeedDownloader::removeTooOldMessages(Feed* feed, QList<Message>& msgs) {
+  const Feed::ArticleIgnoreLimit art = feed->articleIgnoreLimit();
+
+  if (!art.m_addAnyArticlesToDb) {
+    QDateTime dt_to_avoid;
+
+    if (art.m_dtToAvoid.isValid() && art.m_dtToAvoid.toMSecsSinceEpoch() > 0) {
+      dt_to_avoid = art.m_dtToAvoid;
+    }
+    else if (art.m_hoursToAvoid > 0) {
+      dt_to_avoid = QDateTime::currentDateTimeUtc().addSecs((art.m_hoursToAvoid * -3600));
+    }
+    else if (qApp->settings()->value(GROUP(Messages), SETTING(Messages::AvoidOldArticles)).toBool()) {
+      QDateTime global_dt_to_avoid =
+        qApp->settings()->value(GROUP(Messages), SETTING(Messages::DateTimeToAvoidArticle)).toDateTime();
+      int global_hours_to_avoid =
+        qApp->settings()->value(GROUP(Messages), SETTING(Messages::HoursToAvoidArticle)).toInt();
+
+      if (global_dt_to_avoid.isValid() && global_dt_to_avoid.toMSecsSinceEpoch() > 0) {
+        dt_to_avoid = global_dt_to_avoid;
+      }
+      else if (global_hours_to_avoid > 0) {
+        dt_to_avoid = QDateTime::currentDateTimeUtc().addSecs(global_hours_to_avoid * -3600);
+      }
+    }
+
+    if (dt_to_avoid.isValid()) {
+      for (int i = 0; i < msgs.size(); i++) {
+        const auto& mss = msgs.at(i);
+
+        if (mss.m_createdFromFeed && mss.m_created < dt_to_avoid) {
+          qDebugNN << LOGSEC_CORE << "Removing message" << QUOTE_W_SPACE(mss.m_title) << "for being too old.";
+          msgs.removeAt(i--);
+        }
+      }
+    }
+  }
+}
+
 QString FeedDownloadResults::overview(int how_many_feeds) const {
   QStringList result;
 
   for (int i = 0, number_items_output = qMin(how_many_feeds, m_updatedFeeds.size()); i < number_items_output; i++) {
-    result.append(m_updatedFeeds.at(i).first->title() + QSL(": ") + QString::number(m_updatedFeeds.at(i).second));
+    auto* fd = m_updatedFeeds.keys().at(i);
+    auto msgs = m_updatedFeeds.value(fd);
+
+    if (fd->isQuiet()) {
+      continue;
+    }
+
+    result.append(fd->title() + QSL(": ") + QString::number(msgs.size()));
   }
 
   QString res_str = result.join(QSL("\n"));
@@ -518,22 +577,16 @@ QString FeedDownloadResults::overview(int how_many_feeds) const {
   return res_str;
 }
 
-void FeedDownloadResults::appendUpdatedFeed(const QPair<Feed*, int>& feed) {
-  m_updatedFeeds.append(feed);
-}
-
-void FeedDownloadResults::sort() {
-  std::sort(m_updatedFeeds.begin(),
-            m_updatedFeeds.end(),
-            [](const QPair<Feed*, int>& lhs, const QPair<Feed*, int>& rhs) {
-              return lhs.second > rhs.second;
-            });
+void FeedDownloadResults::appendUpdatedFeed(Feed* feed, const QList<Message>& updated_unread_msgs) {
+  if (!updated_unread_msgs.isEmpty()) {
+    m_updatedFeeds.insert(feed, updated_unread_msgs);
+  }
 }
 
 void FeedDownloadResults::clear() {
   m_updatedFeeds.clear();
 }
 
-QList<QPair<Feed*, int>> FeedDownloadResults::updatedFeeds() const {
+QHash<Feed*, QList<Message>> FeedDownloadResults::updatedFeeds() const {
   return m_updatedFeeds;
 }

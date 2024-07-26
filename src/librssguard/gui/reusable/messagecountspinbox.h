@@ -5,8 +5,8 @@
 
 #include <QSpinBox>
 
-class MessageCountSpinBox : public QSpinBox {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC MessageCountSpinBox : public QSpinBox {
+    Q_OBJECT
 
   public:
     explicit MessageCountSpinBox(QWidget* parent = nullptr);

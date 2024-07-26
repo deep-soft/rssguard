@@ -3,27 +3,31 @@
 #ifndef FORMACCOUNTDETAILS_H
 #define FORMACCOUNTDETAILS_H
 
-#include <QDialog>
-
-#include "ui_formaccountdetails.h"
-
 #include "database/databasefactory.h"
 #include "database/databasequeries.h"
 #include "gui/reusable/networkproxydetails.h"
 #include "miscellaneous/application.h"
+#include "services/abstract/gui/accountdetails.h"
+
+#include <QDialog>
+
+namespace Ui {
+  class FormAccountDetails;
+}
 
 class ServiceRoot;
 
-class FormAccountDetails : public QDialog {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC FormAccountDetails : public QDialog {
+    Q_OBJECT
 
   public:
     explicit FormAccountDetails(const QIcon& icon, QWidget* parent = nullptr);
+    virtual ~FormAccountDetails();
 
-    template<class T>
+    template <class T>
     T* addEditAccount(T* account_to_edit = nullptr);
 
-    template<class T>
+    template <class T>
     T* account() const;
 
   protected slots:
@@ -34,7 +38,6 @@ class FormAccountDetails : public QDialog {
     virtual void apply();
 
   protected:
-
     void activateTab(int index);
     void clearTabs();
     void insertCustomTab(QWidget* custom_tab, const QString& title, int index);
@@ -48,13 +51,14 @@ class FormAccountDetails : public QDialog {
     void createConnections();
 
   protected:
-    Ui::FormAccountDetails m_ui;
+    QScopedPointer<Ui::FormAccountDetails> m_ui;
     NetworkProxyDetails* m_proxyDetails;
+    AccountDetails* m_accountDetails;
     ServiceRoot* m_account;
     bool m_creatingNew;
 };
 
-template<class T>
+template <class T>
 inline T* FormAccountDetails::addEditAccount(T* account_to_edit) {
   m_creatingNew = account_to_edit == nullptr;
 
@@ -76,7 +80,7 @@ inline T* FormAccountDetails::addEditAccount(T* account_to_edit) {
   }
 }
 
-template<class T>
+template <class T>
 inline T* FormAccountDetails::account() const {
   return qobject_cast<T*>(m_account);
 }

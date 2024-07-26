@@ -2,21 +2,15 @@
 
 #include "gui/messagepreviewer.h"
 
-#include "3rd-party/boolinq/boolinq.h"
 #include "database/databasequeries.h"
-#include "gui/dialogs/formmain.h"
 #include "gui/itemdetails.h"
-#include "gui/messagebox.h"
-#include "gui/reusable/plaintoolbutton.h"
-#include "gui/reusable/searchtextwidget.h"
 #include "gui/webbrowser.h"
 #include "miscellaneous/application.h"
-#include "network-web/webfactory.h"
+#include "miscellaneous/settings.h"
 #include "services/abstract/gui/custommessagepreviewer.h"
 #include "services/abstract/label.h"
 #include "services/abstract/labelsnode.h"
 #include "services/abstract/serviceroot.h"
-#include "services/gmail/gui/emailpreviewer.h"
 
 #include <QCheckBox>
 #include <QGridLayout>
@@ -48,7 +42,7 @@ void MessagePreviewer::createConnections() {
 }
 
 MessagePreviewer::MessagePreviewer(QWidget* parent)
-  : QWidget(parent), m_mainLayout(new QGridLayout(this)), m_viewerLayout(new QStackedLayout()),
+  : TabContent(parent), m_mainLayout(new QGridLayout(this)), m_viewerLayout(new QStackedLayout()),
     m_toolBar(new QToolBar(this)), m_msgBrowser(new WebBrowser(nullptr, this)), m_separator(nullptr),
     m_btnLabels(QList<LabelToolbarAction*>()), m_itemDetails(new ItemDetails(this)), m_toolbarVisible(true) {
   m_toolBar->setOrientation(Qt::Orientation::Vertical);
@@ -175,7 +169,6 @@ void MessagePreviewer::loadMessage(const Message& message, RootItem* root) {
         }
         else {
           ensureDefaultBrowserVisible();
-
           m_msgBrowser->loadMessages({message}, m_root);
         }
       }
@@ -290,7 +283,7 @@ void MessagePreviewer::updateLabels(bool only_clear) {
     for (auto* label : lbls) {
       LabelToolbarAction* act_label = new LabelToolbarAction(this);
 
-      act_label->setIcon(Label::generateIcon(label->color()));
+      act_label->setIcon(IconFactory::generateIcon(label->color()));
       act_label->setText(QSL(" ") + label->title());
       act_label->setCheckable(true);
       act_label->setChecked(m_message.m_assignedLabelsIds.contains(label->customId()));

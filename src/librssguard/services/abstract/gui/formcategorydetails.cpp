@@ -3,18 +3,17 @@
 #include "services/abstract/gui/formcategorydetails.h"
 
 #include "3rd-party/boolinq/boolinq.h"
-#include "core/feedsmodel.h"
 #include "database/databasequeries.h"
 #include "definitions/definitions.h"
 #include "exceptions/applicationexception.h"
-#include "gui/feedsview.h"
 #include "gui/guiutilities.h"
-#include "gui/messagebox.h"
 #include "gui/reusable/baselineedit.h"
-#include "gui/systemtrayicon.h"
 #include "miscellaneous/iconfactory.h"
 #include "services/abstract/category.h"
+#include "services/abstract/gui/multifeededitcheckbox.h"
 #include "services/abstract/rootitem.h"
+
+#include "ui_formcategorydetails.h"
 
 #include <QAction>
 #include <QDialogButtonBox>
@@ -27,7 +26,7 @@
 #include <QToolButton>
 
 FormCategoryDetails::FormCategoryDetails(ServiceRoot* service_root, RootItem* parent_to_select, QWidget* parent)
-  : QDialog(parent), m_category(nullptr), m_serviceRoot(service_root), m_parentToSelect(parent_to_select) {
+  : QDialog(parent), m_serviceRoot(service_root), m_parentToSelect(parent_to_select) {
   initialize();
   createConnections();
 
@@ -54,8 +53,28 @@ void FormCategoryDetails::createConnections() {
   connect(m_actionUseDefaultIcon, &QAction::triggered, this, &FormCategoryDetails::onUseDefaultIcon);
 }
 
+bool FormCategoryDetails::isChangeAllowed(MultiFeedEditCheckBox* mcb) const {
+  return !m_isBatchEdit || mcb->isChecked();
+}
+
 void FormCategoryDetails::loadCategoryData() {
-  loadCategories(m_serviceRoot->getSubTreeCategories(), m_serviceRoot, m_category);
+  Category* cat = category<Category>();
+
+  if (m_isBatchEdit) {
+    // We hook batch selectors.
+    m_ui->m_mcbParent->addActionWidget(m_ui->m_cmbParentCategory);
+    m_ui->m_mcbTitle->addActionWidget(m_ui->m_txtTitle);
+    m_ui->m_mcbDescription->addActionWidget(m_ui->m_txtDescription);
+    m_ui->m_mcbIcon->addActionWidget(m_ui->m_btnIcon);
+  }
+  else {
+    // We hide batch selectors.
+    for (auto* cb : findChildren<MultiFeedEditCheckBox*>()) {
+      cb->hide();
+    }
+  }
+
+  loadCategories(m_serviceRoot->getSubTreeCategories(), m_serviceRoot, cat);
 
   if (m_creatingNew) {
     GuiUtilities::applyDialogProperties(*this, qApp->icons()->fromTheme(QSL("folder")), tr("Add new category"));
@@ -68,10 +87,10 @@ void FormCategoryDetails::loadCategoryData() {
     if (m_parentToSelect != nullptr) {
       if (m_parentToSelect->kind() == RootItem::Kind::Category) {
         m_ui->m_cmbParentCategory
-          ->setCurrentIndex(m_ui->m_cmbParentCategory->findData(QVariant::fromValue((void*)m_parentToSelect)));
+          ->setCurrentIndex(m_ui->m_cmbParentCategory->findData(QVariant::fromValue(m_parentToSelect)));
       }
       else if (m_parentToSelect->kind() == RootItem::Kind::Feed) {
-        int target_item = m_ui->m_cmbParentCategory->findData(QVariant::fromValue((void*)m_parentToSelect->parent()));
+        int target_item = m_ui->m_cmbParentCategory->findData(QVariant::fromValue(m_parentToSelect->parent()));
 
         if (target_item >= 0) {
           m_ui->m_cmbParentCategory->setCurrentIndex(target_item);
@@ -80,44 +99,69 @@ void FormCategoryDetails::loadCategoryData() {
     }
   }
   else {
-    GuiUtilities::applyDialogProperties(*this, m_category->fullIcon(), tr("Edit \"%1\"").arg(m_category->title()));
+    if (!m_isBatchEdit) {
+      GuiUtilities::applyDialogProperties(*this, cat->fullIcon(), tr("Edit \"%1\"").arg(cat->title()));
+    }
+    else {
+      GuiUtilities::applyDialogProperties(*this,
+                                          qApp->icons()->fromTheme(QSL("folder")),
+                                          tr("Edit %n categories", nullptr, m_categories.size()));
+    }
 
-    m_ui->m_cmbParentCategory
-      ->setCurrentIndex(m_ui->m_cmbParentCategory->findData(QVariant::fromValue((void*)m_category->parent())));
+    m_ui->m_cmbParentCategory->setCurrentIndex(m_ui->m_cmbParentCategory->findData(QVariant::fromValue(cat->parent())));
   }
 
-  m_ui->m_txtTitle->lineEdit()->setText(m_category->title());
-  m_ui->m_txtDescription->lineEdit()->setText(m_category->description());
-  m_ui->m_btnIcon->setIcon(m_category->icon());
+  m_ui->m_txtTitle->lineEdit()->setText(cat->title());
+  m_ui->m_txtDescription->lineEdit()->setText(cat->description());
+  m_ui->m_btnIcon->setIcon(cat->icon());
 
   m_ui->m_txtTitle->lineEdit()->setFocus();
 }
 
 void FormCategoryDetails::apply() {
-  RootItem* parent =
-    static_cast<RootItem*>(m_ui->m_cmbParentCategory->itemData(m_ui->m_cmbParentCategory->currentIndex())
-                             .value<void*>());
-
-  m_category->setTitle(m_ui->m_txtTitle->lineEdit()->text());
-  m_category->setDescription(m_ui->m_txtDescription->lineEdit()->text());
-  m_category->setIcon(m_ui->m_btnIcon->icon());
-
+  QList<Category*> cats = categories<Category>();
+  RootItem* parent = m_ui->m_cmbParentCategory->currentData().value<RootItem*>();
   QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
-  try {
-    DatabaseQueries::createOverwriteCategory(database, m_category, m_serviceRoot->accountId(), parent->id());
-  }
-  catch (const ApplicationException& ex) {
-    qFatal("Cannot save category: '%s'.", qPrintable(ex.message()));
+  for (Category* cat : cats) {
+    if (isChangeAllowed(m_ui->m_mcbTitle)) {
+      cat->setTitle(m_ui->m_txtTitle->lineEdit()->text());
+    }
+
+    if (isChangeAllowed(m_ui->m_mcbDescription)) {
+      cat->setDescription(m_ui->m_txtDescription->lineEdit()->text());
+    }
+
+    if (isChangeAllowed(m_ui->m_mcbIcon)) {
+      cat->setIcon(m_ui->m_btnIcon->icon());
+    }
+
+    int new_parent_id;
+
+    if (isChangeAllowed(m_ui->m_mcbParent)) {
+      new_parent_id = parent->id();
+    }
+    else {
+      new_parent_id = cat->parent()->id();
+    }
+
+    try {
+      DatabaseQueries::createOverwriteCategory(database, cat, m_serviceRoot->accountId(), new_parent_id);
+    }
+    catch (const ApplicationException& ex) {
+      qFatal("Cannot save category: '%s'.", qPrintable(ex.message()));
+    }
+
+    if (isChangeAllowed(m_ui->m_mcbParent)) {
+      m_serviceRoot->requestItemReassignment(cat, parent);
+    }
+
+    if (m_creatingNew) {
+      m_serviceRoot->requestItemExpand({parent}, true);
+    }
   }
 
-  m_serviceRoot->requestItemReassignment(m_category, parent);
-  m_serviceRoot->itemChanged({m_category});
-
-  if (m_creatingNew) {
-    m_serviceRoot->requestItemExpand({parent}, true);
-  }
-
+  m_serviceRoot->itemChanged(categories<RootItem>());
   accept();
 }
 
@@ -211,7 +255,7 @@ void FormCategoryDetails::initialize() {
 void FormCategoryDetails::loadCategories(const QList<Category*>& categories,
                                          RootItem* root_item,
                                          Category* input_category) {
-  m_ui->m_cmbParentCategory->addItem(root_item->icon(), root_item->title(), QVariant::fromValue((void*)root_item));
+  m_ui->m_cmbParentCategory->addItem(root_item->icon(), root_item->title(), QVariant::fromValue(root_item));
 
   for (Category* category : categories) {
     if (input_category != nullptr && (category == input_category || category->isChildOf(input_category))) {
@@ -223,6 +267,6 @@ void FormCategoryDetails::loadCategories(const QList<Category*>& categories,
 
     m_ui->m_cmbParentCategory->addItem(category->data(FDS_MODEL_TITLE_INDEX, Qt::DecorationRole).value<QIcon>(),
                                        category->title(),
-                                       QVariant::fromValue((void*)category));
+                                       QVariant::fromValue(category));
   }
 }

@@ -6,7 +6,7 @@
 #include "gui/guiutilities.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
-#include "services/standard/standardserviceentrypoint.h"
+#include "services/abstract/serviceentrypoint.h"
 
 #include <QDialogButtonBox>
 #include <QListWidget>
@@ -52,13 +52,15 @@ void FormAddAccount::showAccountDetails() {
 }
 
 ServiceEntryPoint* FormAddAccount::selectedEntryPoint() const {
-  return m_entryPoints.at(m_ui->m_listEntryPoints->currentRow());
+  return reinterpret_cast<ServiceEntryPoint*>(m_ui->m_listEntryPoints->currentItem()
+                                                ->data(Qt::ItemDataRole::UserRole)
+                                                .value<intptr_t>());
 }
 
 void FormAddAccount::loadEntryPoints() {
   int classic_row = 0, i = 0;
 
-  for (const ServiceEntryPoint* entry_point : qAsConst(m_entryPoints)) {
+  for (const ServiceEntryPoint* entry_point : std::as_const(m_entryPoints)) {
     if (entry_point->code() == QSL(SERVICE_CODE_STD_RSS)) {
       classic_row = i;
     }
@@ -66,8 +68,10 @@ void FormAddAccount::loadEntryPoints() {
     QListWidgetItem* item = new QListWidgetItem(entry_point->icon(), entry_point->name(), m_ui->m_listEntryPoints);
 
     item->setToolTip(entry_point->description());
+    item->setData(Qt::ItemDataRole::UserRole, QVariant::fromValue<intptr_t>(reinterpret_cast<intptr_t>(entry_point)));
     i++;
   }
 
   m_ui->m_listEntryPoints->setCurrentRow(classic_row);
+  m_ui->m_listEntryPoints->sortItems(Qt::SortOrder::AscendingOrder);
 }

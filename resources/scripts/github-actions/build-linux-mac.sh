@@ -10,18 +10,26 @@ if [[ "$os" == *"ubuntu"* ]]; then
   echo "We are building for GNU/Linux on Ubuntu."
   is_linux=true
   prefix="AppDir/usr"
+
   if [[ "$webengine" == "ON" ]]; then
+    libmpv="ON"
+    qtmultimedia="OFF"
     app_id="io.github.martinrotter.rssguard"
   else
+    libmpv="OFF"
+    qtmultimedia="ON"
     app_id="io.github.martinrotter.rssguardlite"
   fi
 else
   echo "We are building for macOS."
   is_linux=false
   prefix="RSS Guard.app"
+
+  libmpv="OFF"
+  qtmultimedia="ON"
 fi
 
-echo "OS: $os; WebEngine: $webengine"
+echo "OS: $os; Not lite: $webengine"
 
 # Install needed dependencies.
 if [ $is_linux = true ]; then
@@ -31,11 +39,11 @@ if [ $is_linux = true ]; then
   QTARCH="gcc_64"
   USE_QT6="OFF"
 
-  sudo add-apt-repository ppa:beineri/opt-qt-5.15.2-focal -y
+  sudo add-apt-repository ppa:beineri/opt-qt-5.15.4-focal -y
   sudo apt-get update
 
-  sudo apt-get -qy install qt515tools qt515base qt515webengine qt515svg qt515multimedia qt515imageformats
-  sudo apt-get -qy install cmake ninja-build openssl libssl-dev libgl1-mesa-dev gstreamer1.0-alsa gstreamer1.0-nice gstreamer1.0-plugins-good gstreamer1.0-plugins-base gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-qt5 gstreamer1.0-pulseaudio
+  sudo apt-get -qy install qt515tools qt515base qt515webengine qt515svg qt515multimedia qt515imageformats appstream
+  sudo apt-get -qy install cmake ninja-build openssl libssl-dev libgl1-mesa-dev gstreamer1.0-alsa gstreamer1.0-nice gstreamer1.0-plugins-good gstreamer1.0-plugins-base gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-qt5 gstreamer1.0-pulseaudio libmpv-dev
 
   # The script below performs some broken testing, which ends up tripping 'set -e'.
   # So we temporarily ignore errors when sourcing the script, and re-enable them afterward.
@@ -51,22 +59,22 @@ else
   USE_QT6="ON"
 
   QTPATH="$(pwd)/Qt"
-  QTVERSION="6.4.3"
+  QTVERSION="6.7.2"
   QTBIN="$QTPATH/$QTVERSION/$QTOS/bin"
 
   # Install "aqtinstall" from its master branch to have latest code.
-  pip3 install -I aqtinstall #git+https://github.com/miurahr/aqtinstall
+  pip3 install -I aqtinstall
 
   echo "Qt bin directory is: $QTBIN"
   echo "Qt will be installed to: $QTPATH"
 
   # Install Qt.
-  aqt install-qt -O "$QTPATH" "$QTTARGET" "desktop" "$QTVERSION" "$QTARCH" -m "qtwebengine" "qtimageformats" "qtwebchannel" "qtmultimedia" "qt5compat" "qtpositioning" "qtserialport"
-  aqt install-tool -O "$QTPATH" "$QTTARGET" "desktop" "tools_cmake"
-  aqt install-tool -O "$QTPATH" "$QTTARGET" "desktop" "tools_ninja"
+  aqt -c 'aqt/settings.ini' install-qt -O "$QTPATH" "$QTTARGET" "desktop" "$QTVERSION" "$QTARCH" -m "qtwebengine" "qtimageformats" "qtwebchannel" "qtmultimedia" "qt5compat" "qtpositioning" "qtserialport"
+  aqt -c 'aqt/settings.ini' install-tool -O "$QTPATH" "$QTTARGET" "desktop" "tools_cmake"
+  aqt -c 'aqt/settings.ini' install-tool -O "$QTPATH" "$QTTARGET" "desktop" "tools_ninja"
 
   export QT_PLUGIN_PATH="$QTPATH/$QTVERSION/$QTOS/plugins"
-  export PATH="$QTBIN:$QTPATH/Tools/CMake/bin:$QTPATH/Tools/Ninja:$PATH"
+  export PATH="$QTBIN:$QTPATH/Tools/CMake/CMake.app/Contents/bin:$QTPATH/Tools/Ninja:$PATH"
 fi
 
 cmake --version
@@ -78,11 +86,14 @@ git_revision=$(git rev-parse --short HEAD)
 mkdir rssguard-build
 cd rssguard-build
 
-cmake .. --warn-uninitialized -G Ninja -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0" -DFORCE_BUNDLE_ICONS="ON" -DCMAKE_BUILD_TYPE="MinSizeRel" -DCMAKE_INSTALL_PREFIX="$prefix" -DREVISION_FROM_GIT="ON" -DBUILD_WITH_QT6="$USE_QT6" -DUSE_WEBENGINE="$webengine" -DFEEDLY_CLIENT_ID="$FEEDLY_CLIENT_ID" -DFEEDLY_CLIENT_SECRET="$FEEDLY_CLIENT_SECRET" -DGMAIL_CLIENT_ID="$GMAIL_CLIENT_ID" -DGMAIL_CLIENT_SECRET="$GMAIL_CLIENT_SECRET"
+cmake .. --warn-uninitialized -G Ninja -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="10.15" -DFORCE_BUNDLE_ICONS="ON" -DCMAKE_BUILD_TYPE="MinSizeRel" -DCMAKE_VERBOSE_MAKEFILE="ON" -DCMAKE_INSTALL_PREFIX="$prefix" -DREVISION_FROM_GIT="ON" -DBUILD_WITH_QT6="$USE_QT6" -DENABLE_COMPRESSED_SITEMAP="ON" -DENABLE_MEDIAPLAYER_LIBMPV="$libmpv" -DENABLE_MEDIAPLAYER_QTMULTIMEDIA="$qtmultimedia" -DNO_LITE="$webengine" -DFEEDLY_CLIENT_ID="$FEEDLY_CLIENT_ID" -DFEEDLY_CLIENT_SECRET="$FEEDLY_CLIENT_SECRET" -DGMAIL_CLIENT_ID="$GMAIL_CLIENT_ID" -DGMAIL_CLIENT_SECRET="$GMAIL_CLIENT_SECRET"
 cmake --build .
 cmake --install . --prefix "$prefix"
 
 if [ $is_linux = true ]; then
+  # Validate AppStream metadata.
+  echo 'Validating AppStream metadata...'
+  appstreamcli validate "$prefix/share/metainfo/$app_id.metainfo.xml"
   # Obtain linuxdeployqt.
   wget -qc https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage
   chmod a+x linuxdeployqt-continuous-x86_64.AppImage 
@@ -121,7 +132,7 @@ if [ $is_linux = true ]; then
   if [[ "$webengine" == "ON" ]]; then
     imagenewname="rssguard-${git_tag}-${git_revision}-linux64.AppImage"
   else
-    imagenewname="rssguard-${git_tag}-${git_revision}-nowebengine-linux64.AppImage"
+    imagenewname="rssguard-${git_tag}-${git_revision}-lite-linux64.AppImage"
   fi
 else
   # Fix .dylib linking.
@@ -141,7 +152,7 @@ else
   if [[ "$webengine" == "ON" ]]; then
     imagenewname="rssguard-${git_tag}-${git_revision}-mac64.dmg"
   else
-    imagenewname="rssguard-${git_tag}-${git_revision}-nowebengine-mac64.dmg"
+    imagenewname="rssguard-${git_tag}-${git_revision}-lite-mac64.dmg"
   fi
 fi
 

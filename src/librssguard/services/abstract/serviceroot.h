@@ -3,11 +3,9 @@
 #ifndef SERVICEROOT_H
 #define SERVICEROOT_H
 
-#include "services/abstract/rootitem.h"
-
 #include "core/message.h"
-#include "core/messagefilter.h"
 #include "definitions/typedefs.h"
+#include "services/abstract/rootitem.h"
 
 #include <QJsonDocument>
 #include <QNetworkProxy>
@@ -25,11 +23,12 @@ class Label;
 class MessagesModel;
 class CustomMessagePreviewer;
 class CacheForServiceRoot;
+class FormAccountDetails;
 
 // THIS IS the root node of the service.
 // NOTE: The root usually contains some core functionality of the
 // service like service account username/password etc.
-class ServiceRoot : public RootItem {
+class RSSGUARD_DLLSPEC ServiceRoot : public RootItem {
     Q_OBJECT
 
   public:
@@ -43,7 +42,11 @@ class ServiceRoot : public RootItem {
       Synchronised = 8
     };
 
-    enum class BagOfMessages { Read, Unread, Starred };
+    enum class BagOfMessages {
+      Read,
+      Unread,
+      Starred
+    };
 
   public:
     explicit ServiceRoot(RootItem* parent = nullptr);
@@ -56,9 +59,12 @@ class ServiceRoot : public RootItem {
     SearchsNode* probesNode() const;
     UnreadNode* unreadNode() const;
 
+    virtual FormAccountDetails* accountSetupDialog() const;
+    virtual void onDatabaseCleanup();
     virtual void updateCounts(bool including_total_count);
     virtual bool canBeDeleted() const;
-    virtual bool deleteViaGui();
+    virtual bool deleteItem();
+    virtual void editItems(const QList<RootItem*>& items);
     virtual bool markAsReadUnread(ReadStatus status);
     virtual QList<Message> undeletedMessages() const;
     virtual bool supportsFeedAdding() const;
@@ -202,7 +208,7 @@ class ServiceRoot : public RootItem {
     void completelyRemoveAllData();
 
     // Returns counts of updated messages <unread, all>.
-    QPair<int, int> updateMessages(QList<Message>& messages, Feed* feed, bool force_update, QMutex* db_mutex);
+    UpdatedArticles updateMessages(QList<Message>& messages, Feed* feed, bool force_update, QMutex* db_mutex);
 
     QIcon feedIconForMessage(const QString& feed_custom_id) const;
 
@@ -218,6 +224,7 @@ class ServiceRoot : public RootItem {
     void requestItemExpand(const QList<RootItem*>& items, bool expand);
     void requestItemExpandStateSave(RootItem* subtree_root);
     void requestItemReassignment(RootItem* item, RootItem* new_parent);
+    void requestItemsReassignment(const QList<RootItem*>& items, RootItem* new_parent);
     void requestItemRemoval(RootItem* item);
 
     // Some message/feed attribute selectors.
@@ -235,7 +242,22 @@ class ServiceRoot : public RootItem {
     QStringList customIDSOfMessagesForItem(RootItem* item,
                                            RootItem::ReadStatus target_read = RootItem::ReadStatus::Unknown);
 
-    void performInitialAssembly(const Assignment& categories, const Assignment& feeds, const QList<Label*>& labels);
+    void performInitialAssembly(const Assignment& categories,
+                                const Assignment& feeds,
+                                const QList<Label*>& labels,
+                                const QList<Search*>& probes);
+
+    bool nodeShowUnread() const;
+    void setNodeShowUnread(bool enabled);
+
+    bool nodeShowImportant() const;
+    void setNodeShowImportant(bool enabled);
+
+    bool nodeShowLabels() const;
+    void setNodeShowLabels(bool enabled);
+
+    bool nodeShowProbes() const;
+    void setNodeShowProbes(bool enabled);
 
   public slots:
     virtual void addNewFeed(RootItem* selected_item, const QString& url = QString());
@@ -304,6 +326,10 @@ class ServiceRoot : public RootItem {
     int m_accountId;
     QList<QAction*> m_serviceMenu;
     QNetworkProxy m_networkProxy;
+    bool m_nodeShowUnread;
+    bool m_nodeShowImportant;
+    bool m_nodeShowLabels;
+    bool m_nodeShowProbes;
 };
 
 #if QT_VERSION_MAJOR == 6

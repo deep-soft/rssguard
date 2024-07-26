@@ -6,19 +6,15 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>270</width>
-    <height>97</height>
+    <width>350</width>
+    <height>100</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
      <item>
-      <widget class="ColorToolButton" name="m_btnColor">
-       <property name="text">
-        <string>...</string>
-       </property>
-      </widget>
+      <widget class="ColorToolButton" name="m_btnColor"/>
      </item>
      <item>
       <widget class="LineEditWithStatus" name="m_txtName" native="true"/>
@@ -52,15 +48,15 @@
  </widget>
  <customwidgets>
   <customwidget>
+   <class>ColorToolButton</class>
+   <extends>QToolButton</extends>
+   <header>colortoolbutton.h</header>
+  </customwidget>
+  <customwidget>
    <class>LineEditWithStatus</class>
    <extends>QWidget</extends>
    <header>lineeditwithstatus.h</header>
    <container>1</container>
-  </customwidget>
-  <customwidget>
-   <class>ColorToolButton</class>
-   <extends>QToolButton</extends>
-   <header>colortoolbutton.h</header>
   </customwidget>
  </customwidgets>
  <tabstops>

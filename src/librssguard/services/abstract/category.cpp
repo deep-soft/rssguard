@@ -4,8 +4,6 @@
 
 #include "database/databasequeries.h"
 #include "miscellaneous/application.h"
-#include "miscellaneous/iconfactory.h"
-#include "miscellaneous/textfactory.h"
 #include "services/abstract/cacheforserviceroot.h"
 #include "services/abstract/feed.h"
 #include "services/abstract/serviceroot.h"
@@ -20,13 +18,13 @@ Category::Category(const Category& other) : RootItem(other) {
 
 void Category::updateCounts(bool including_total_count) {
   QList<Feed*> feeds;
-  auto str = getSubTree();
+  auto str = childItems();
 
-  for (RootItem* child : qAsConst(str)) {
+  for (RootItem* child : std::as_const(str)) {
     if (child->kind() == RootItem::Kind::Feed) {
       feeds.append(child->toFeed());
     }
-    else if (child->kind() != RootItem::Kind::Category && child->kind() != RootItem::Kind::ServiceRoot) {
+    else if (child->kind() == RootItem::Kind::Category) {
       child->updateCounts(including_total_count);
     }
   }
@@ -69,4 +67,10 @@ bool Category::markAsReadUnread(RootItem::ReadStatus status) {
   }
 
   return service->markFeedsReadUnread(getSubTreeFeeds(), status);
+}
+
+QString Category::additionalTooltip() const {
+  return tr("Number of feeds: %1\n"
+            "Number of categories: %2")
+    .arg(QString::number(getSubTreeFeeds().size()), QString::number(getSubTreeCategories().size() - 1));
 }

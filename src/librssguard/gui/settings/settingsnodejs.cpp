@@ -5,6 +5,7 @@
 #include "definitions/definitions.h"
 #include "exceptions/applicationexception.h"
 #include "miscellaneous/application.h"
+#include "miscellaneous/iconfactory.h"
 #include "miscellaneous/nodejs.h"
 #include "network-web/webfactory.h"
 
@@ -54,6 +55,10 @@ SettingsNodejs::SettingsNodejs(Settings* settings, QWidget* parent) : SettingsPa
   });
 }
 
+QIcon SettingsNodejs::icon() const {
+  return qApp->icons()->fromTheme(QSL("node-join"), QSL("node"));
+}
+
 void SettingsNodejs::changeFileFolder(LineEditWithStatus* tb, bool directory_select, const QString& file_filter) {
   QFileDialog d(this);
 
@@ -66,7 +71,7 @@ void SettingsNodejs::changeFileFolder(LineEditWithStatus* tb, bool directory_sel
     d.setNameFilter(file_filter);
   }
 
-  QString current = qApp->replaceDataUserDataFolderPlaceholder(tb->lineEdit()->text());
+  QString current = qApp->replaceUserDataFolderPlaceholder(tb->lineEdit()->text());
 
   d.selectFile(current);
 
@@ -107,7 +112,7 @@ void SettingsNodejs::testNodejs() {
                                        tr("Node.js has version %1.").arg(node_version));
   }
   catch (const ApplicationException& ex) {
-    m_ui.m_tbNodeExecutable->setStatus(WidgetWithStatus::StatusType::Error, tr("Node.js: %1.").arg(ex.message()));
+    m_ui.m_tbNodeExecutable->setStatus(WidgetWithStatus::StatusType::Error, QSL("Node.js: %1.").arg(ex.message()));
   }
 }
 
@@ -118,12 +123,12 @@ void SettingsNodejs::testNpm() {
     m_ui.m_tbNpmExecutable->setStatus(WidgetWithStatus::StatusType::Ok, tr("NPM has version %1.").arg(npm_version));
   }
   catch (const ApplicationException& ex) {
-    m_ui.m_tbNpmExecutable->setStatus(WidgetWithStatus::StatusType::Error, tr("NPM: %1.").arg(ex.message()));
+    m_ui.m_tbNpmExecutable->setStatus(WidgetWithStatus::StatusType::Error, QSL("NPM: %1.").arg(ex.message()));
   }
 }
 
 void SettingsNodejs::testPackageFolder() {
-  QString folder = qApp->replaceDataUserDataFolderPlaceholder(m_ui.m_tbPackageFolder->lineEdit()->text());
+  QString folder = qApp->replaceUserDataFolderPlaceholder(m_ui.m_tbPackageFolder->lineEdit()->text());
 
   const auto fi = QFileInfo(folder);
   const auto is_file = fi.isFile() && fi.exists();

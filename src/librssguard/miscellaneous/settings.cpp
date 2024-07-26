@@ -4,15 +4,27 @@
 
 #include "miscellaneous/application.h"
 #include "miscellaneous/iofactory.h"
+
 #include <QDebug>
 #include <QDir>
 #include <QLocale>
 #include <QPointer>
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 // WebEngine.
 DKEY WebEngineAttributes::ID = "web_engine_attributes";
 #endif
+
+DKEY DialogGeometries::ID = "dialog_geometries";
+
+// Media player.
+KEY VideoPlayer::ID = "media_player";
+
+DKEY VideoPlayer::MpvUseCustomConfigFolder = "mpv_use_custom_config_folder";
+DVALUE(bool) VideoPlayer::MpvUseCustomConfigFolderDef = true;
+
+DKEY VideoPlayer::MpvCustomConfigFolder = "mpv_config_folder";
+DVALUE(QString) VideoPlayer::MpvCustomConfigFolderDef = "%data%/mpv";
 
 // Node.js.
 DKEY Node::ID = "nodejs";
@@ -46,6 +58,9 @@ DKEY Network::ID = "network";
 
 DKEY Network::SendDNT = "send_dnt";
 VALUE(bool) Network::SendDNTDef = false;
+
+DKEY Network::EnableApiServer = "api_server";
+VALUE(bool) Network::EnableApiServerDef = false;
 
 DKEY Network::EnableHttp2 = "http2_enabled";
 DVALUE(bool) Network::EnableHttp2Def = false;
@@ -110,6 +125,9 @@ DVALUE(bool) Feeds::ShowTreeBranchesDef = true;
 DKEY Feeds::HideCountsIfNoUnread = "hide_counts_if_no_unread";
 DVALUE(bool) Feeds::HideCountsIfNoUnreadDef = false;
 
+DKEY Feeds::UpdateFeedListDuringFetching = "update_feed_list_during_fetching";
+DVALUE(bool) Feeds::UpdateFeedListDuringFetchingDef = false;
+
 DKEY Feeds::AutoExpandOnSelection = "auto_expand_on_selection";
 DVALUE(bool) Feeds::AutoExpandOnSelectionDef = false;
 
@@ -124,11 +142,35 @@ DKEY Feeds::ListFont = "list_font";
 // Messages.
 DKEY Messages::ID = "messages";
 
-DKEY Messages::MessageHeadImageHeight = "message_head_image_height";
-DVALUE(int) Messages::MessageHeadImageHeightDef = 36;
+DKEY Messages::LimitArticleImagesHeight = "message_head_image_height";
+DVALUE(int) Messages::LimitArticleImagesHeightDef = 72;
+
+DKEY Messages::UseLegacyArticleFormat = "legacy_article_format";
+DVALUE(bool) Messages::UseLegacyArticleFormatDef = false;
 
 DKEY Messages::DisplayEnclosuresInMessage = "show_enclosures_in_message";
 DVALUE(bool) Messages::DisplayEnclosuresInMessageDef = false;
+
+DKEY Messages::AvoidOldArticles = "avoid_old_articles";
+DVALUE(bool) Messages::AvoidOldArticlesDef = false;
+
+DKEY Messages::DateTimeToAvoidArticle = "datetime_to_avoid_article";
+DVALUE(QDateTime) Messages::DateTimeToAvoidArticleDef = QDateTime::currentDateTime();
+
+DKEY Messages::HoursToAvoidArticle = "hours_to_avoid_article";
+DVALUE(int) Messages::HoursToAvoidArticleDef = 0;
+
+DKEY Messages::LimitDoNotRemoveUnread = "limit_dont_remove_unread";
+DVALUE(bool) Messages::LimitDoNotRemoveUnreadDef = true;
+
+DKEY Messages::LimitDoNotRemoveStarred = "limit_dont_remove_starred";
+DVALUE(bool) Messages::LimitDoNotRemoveStarredDef = true;
+
+DKEY Messages::LimitRecycleInsteadOfPurging = "limit_recycle_dont_purge";
+DVALUE(bool) Messages::LimitRecycleInsteadOfPurgingDef = false;
+
+DKEY Messages::LimitCountOfArticles = "limit_count_of_articles";
+DVALUE(int) Messages::LimitCountOfArticlesDef = 0;
 
 DKEY Messages::AlwaysDisplayItemPreview = "always_display_preview";
 DVALUE(bool) Messages::AlwaysDisplayItemPreviewDef = true;
@@ -142,9 +184,6 @@ DVALUE(bool) Messages::ShowResourcesInArticlesDef = true;
 DKEY Messages::Zoom = "zoom";
 DVALUE(qreal) Messages::ZoomDef = double(1.0);
 
-DKEY Messages::SimpleArticleLayout = "simple_article_layout";
-DVALUE(bool) Messages::SimpleArticleLayoutDef = false;
-
 DKEY Messages::FixupFutureArticleDateTimes = "fixup_future_datetimes";
 DVALUE(bool) Messages::FixupFutureArticleDateTimesDef = false;
 
@@ -154,8 +193,20 @@ DVALUE(bool) Messages::UseCustomDateDef = false;
 DKEY Messages::CustomDateFormat = "custom_date_format";
 DVALUE(char*) Messages::CustomDateFormatDef = "";
 
+DKEY Messages::CustomFormatForDatesOnly = "custom_date_format_for_dates_only";
+DVALUE(char*) Messages::CustomFormatForDatesOnlyDef = "";
+
+DKEY Messages::UseCustomFormatForDatesOnly = "use_custom_date_for_dates_only";
+DVALUE(bool) Messages::UseCustomFormatForDatesOnlyDef = false;
+
 DKEY Messages::RelativeTimeForNewerArticles = "relative_time_for_new_articles";
 DVALUE(int) Messages::RelativeTimeForNewerArticlesDef = -1;
+
+DKEY Messages::ArticleMarkOnSelection = "mark_message_on_selected";
+DVALUE(int) Messages::ArticleMarkOnSelectionDef = int(MessagesView::ArticleMarkingPolicy::MarkImmediately);
+
+DKEY Messages::ArticleMarkOnSelectionDelay = "mark_message_on_selected_delay";
+DVALUE(int) Messages::ArticleMarkOnSelectionDelayDef = 3000;
 
 DKEY Messages::ArticleListPadding = "article_list_padding";
 DVALUE(int) Messages::ArticleListPaddingDef = -1;
@@ -241,7 +292,6 @@ DVALUE(char*)
 GUI::StatusbarActionsDef = "m_barProgressDownloadAction,m_barProgressFeedsAction,m_actionUpdateAllItems,m_"
                            "actionUpdateSelectedItems,m_actionStopRunningItemsUpdate,m_actionFullscreen,m_actionQuit";
 
-DKEY GUI::SettingsWindowInitialSize = "settings_window_size";
 DKEY GUI::MainWindowInitialSize = "window_size";
 DKEY GUI::MainWindowInitialPosition = "window_position";
 
@@ -277,6 +327,25 @@ DVALUE(bool) GUI::StatusBarVisibleDef = true;
 
 DKEY GUI::EnableNotifications = "enable_notifications";
 DVALUE(bool) GUI::EnableNotificationsDef = true;
+
+DKEY GUI::UseToastNotifications = "use_toast_notifications";
+DVALUE(bool) GUI::UseToastNotificationsDef = true;
+
+DKEY GUI::ToastNotificationsPosition = "toast_notifications_position";
+DVALUE(ToastNotificationsManager::NotificationPosition)
+GUI::ToastNotificationsPositionDef = ToastNotificationsManager::NotificationPosition::BottomRight;
+
+DKEY GUI::ToastNotificationsScreen = "toast_notifications_screen";
+DVALUE(int) GUI::ToastNotificationsScreenDef = -1;
+
+DKEY GUI::ToastNotificationsMargin = "toast_notifications_margin";
+DVALUE(int) GUI::ToastNotificationsMarginDef = NOTIFICATIONS_MARGIN;
+
+DKEY GUI::ToastNotificationsOpacity = "toast_notifications_opacity";
+DVALUE(double) GUI::ToastNotificationsOpacityDef = 0.9;
+
+DKEY GUI::ToastNotificationsWidth = "toast_notifications_width";
+DVALUE(int) GUI::ToastNotificationsWidthDef = NOTIFICATIONS_WIDTH;
 
 DKEY GUI::HideMainWindowWhenMinimized = "hide_when_minimized";
 DVALUE(bool) GUI::HideMainWindowWhenMinimizedDef = false;
@@ -323,7 +392,7 @@ DKEY GUI::DefaultSortOrderFeeds = "default_sort_order_feeds";
 DVALUE(Qt::SortOrder) GUI::DefaultSortOrderFeedsDef = Qt::AscendingOrder;
 
 DKEY GUI::IconTheme = "icon_theme_name";
-DVALUE(char*) GUI::IconThemeDef = APP_THEME_DEFAULT;
+DVALUE(char*) GUI::IconThemeDef = APP_ICON_THEME_DEFAULT;
 
 DKEY GUI::Skin = "skin";
 DVALUE(char*) GUI::SkinDef = APP_SKIN_DEFAULT;
@@ -335,7 +404,7 @@ DVALUE(char*) GUI::StyleDef = APP_STYLE_DEFAULT;
 DKEY General::ID = "main";
 
 DKEY General::UpdateOnStartup = "update_on_start";
-DVALUE(bool) General::UpdateOnStartupDef = true;
+DVALUE(bool) General::UpdateOnStartupDef = false;
 
 DKEY General::FirstRun = "first_run";
 DVALUE(bool) General::FirstRunDef = true;

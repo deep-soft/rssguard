@@ -5,7 +5,9 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0</project_license>
   <name>@APPDATA_NAME@</name>
-  <developer_name>Martin Rotter</developer_name>
+  <developer id="io.github.martinrotter">
+    <name>Martin Rotter</name>
+  </developer>
   <update_contact>rotter.martinos_AT_gmail.com</update_contact>
   <summary>@APPDATA_SUMMARY@</summary>
   <description>
@@ -30,17 +32,25 @@
       <li>Next Cloud News</li>
       <li>Tiny Tiny RSS</li>
     </ul>
+    <p>
+      Note for Flatpak users: The autostart feature can only work if you manually allow us access to the ~/.config/autostart directory. You can easily do that with the following command:
+    </p>
+    <p>
+      flatpak override --user --filesystem=xdg-config/autostart @APP_REVERSE_NAME@
+    </p>
   </description>
   <launchable type="desktop-id">@APP_REVERSE_NAME@.desktop</launchable>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/martinrotter/rssguard/master/resources/docs/images/rssguard-window.png</image>
+      <caption>The main window</caption>
+      <image>https://raw.githubusercontent.com/martinrotter/rssguard/master/resources/graphics/official_pictures/main-window-linux.png</image>
     </screenshot>
   </screenshots>
   <url type="homepage">https://github.com/martinrotter/rssguard</url>
+  <url type="help">https://rssguard.readthedocs.io</url>
   <url type="bugtracker">https://github.com/martinrotter/rssguard/issues</url>
   <url type="donation">https://github.com/sponsors/martinrotter</url>
-  <url type="translate">https://explore.transifex.com/martinrotter/rssguard</url>
+  <url type="translate">https://crowdin.com/project/rssguard</url>
   <keywords>
     <keyword translate="no">ATOM</keyword>
     <keyword translate="no">JSON</keyword>
@@ -57,10 +67,11 @@
     <keyword translate="no">The Old Reader</keyword>
     <keyword translate="no">Tiny Tiny RSS</keyword>
   </keywords>
-  <content_rating type="oars-1.0" />
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="@APP_VERSION@" date="@DATE@" />
+    <release version="@APP_VERSION@" date="@DATE@">
+      <url>https://github.com/martinrotter/rssguard/releases/tag/@APP_VERSION@</url>
+    </release>
   </releases>
   <provides>
     <binary>@APP_LOW_NAME@</binary>

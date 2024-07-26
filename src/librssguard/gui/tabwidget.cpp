@@ -6,6 +6,7 @@
 #include "gui/dialogs/formmain.h"
 #include "gui/feedmessageviewer.h"
 #include "gui/feedsview.h"
+#include "gui/messagepreviewer.h"
 #include "gui/messagesview.h"
 #include "gui/reusable/plaintoolbutton.h"
 #include "gui/tabbar.h"
@@ -14,7 +15,10 @@
 #include "miscellaneous/iconfactory.h"
 #include "miscellaneous/settings.h"
 #include "miscellaneous/textfactory.h"
-#include "network-web/webfactory.h"
+
+#if defined(ENABLE_MEDIAPLAYER)
+#include "gui/mediaplayer/mediaplayer.h"
+#endif
 
 #include <QMenu>
 #include <QTimer>
@@ -25,6 +29,7 @@ TabWidget::TabWidget(QWidget* parent) : QTabWidget(parent), m_menuMain(nullptr) 
   setupMainMenuButton();
   initializeTabs();
   createConnections();
+  updateAppearance();
 }
 
 TabWidget::~TabWidget() {
@@ -38,6 +43,8 @@ void TabWidget::setupMainMenuButton() {
   m_btnMainMenu->setToolTip(tr("Displays main menu."));
   m_btnMainMenu->setIcon(qApp->icons()->fromTheme(QSL("go-home")));
   m_btnMainMenu->setPopupMode(QToolButton::ToolButtonPopupMode::InstantPopup);
+
+  setCornerWidget(m_btnMainMenu, Qt::Corner::TopLeftCorner);
 
   connect(m_btnMainMenu, &PlainToolButton::clicked, this, &TabWidget::openMainMenu);
 }
@@ -80,26 +87,30 @@ void TabWidget::showDownloadManager() {
   setCurrentIndex(count() - 1);
 }
 
-void TabWidget::checkTabBarVisibility() {
-  const bool should_be_visible =
-    count() > 1 || !qApp->settings()->value(GROUP(GUI), SETTING(GUI::HideTabBarIfOnlyOneTab)).toBool();
+void TabWidget::checkCornerButtonVisibility() {
+  const bool should_be_visible = count() > 1 || !tabBarAutoHide();
 
+  /*
   if (should_be_visible) {
     setCornerWidget(m_btnMainMenu, Qt::Corner::TopLeftCorner);
-    m_btnMainMenu->setVisible(true);
   }
   else {
     setCornerWidget(nullptr, Qt::Corner::TopLeftCorner);
     setCornerWidget(nullptr, Qt::Corner::TopRightCorner);
-    m_btnMainMenu->setVisible(false);
   }
+  */
 
-  tabBar()->setVisible(should_be_visible);
+  m_btnMainMenu->setVisible(should_be_visible);
+  // tabBar()->setVisible(should_be_visible);
+}
+
+void TabWidget::updateAppearance() {
+  setTabBarAutoHide(qApp->settings()->value(GROUP(GUI), SETTING(GUI::HideTabBarIfOnlyOneTab)).toBool());
 }
 
 void TabWidget::tabInserted(int index) {
   QTabWidget::tabInserted(index);
-  checkTabBarVisibility();
+  checkCornerButtonVisibility();
   const int count_of_tabs = count();
 
   if (index < count_of_tabs - 1 && count_of_tabs > 1) {
@@ -110,7 +121,7 @@ void TabWidget::tabInserted(int index) {
 
 void TabWidget::tabRemoved(int index) {
   QTabWidget::tabRemoved(index);
-  checkTabBarVisibility();
+  checkCornerButtonVisibility();
   const int count_of_tabs = count();
 
   if (index < count_of_tabs && count_of_tabs > 1) {
@@ -124,13 +135,15 @@ void TabWidget::createConnections() {
   connect(tabBar(), &TabBar::tabMoved, this, &TabWidget::fixContentsAfterMove);
 
   connect(feedMessageViewer()->messagesView(),
-          &MessagesView::openMessagesInNewspaperView,
+          &MessagesView::openSingleMessageInNewTab,
           this,
-          &TabWidget::addNewspaperView);
-  connect(feedMessageViewer()->feedsView(),
-          &FeedsView::openMessagesInNewspaperView,
-          this,
-          &TabWidget::addNewspaperView);
+          &TabWidget::addSingleMessageView);
+
+#if defined(ENABLE_MEDIAPLAYER)
+  connect(feedMessageViewer()->messagesView(), &MessagesView::playLinkInMediaPlayer, this, [this](const QString& url) {
+    addMediaPlayer(url, true);
+  });
+#endif
 }
 
 void TabWidget::initializeTabs() {
@@ -174,8 +187,8 @@ bool TabWidget::closeTab(int index) {
   }
 }
 
-void TabWidget::closeBrowserTab() {
-  auto idx = indexOf(qobject_cast<WebBrowser*>(sender()));
+void TabWidget::closeTabWithSender() {
+  auto idx = indexOf(qobject_cast<QWidget*>(sender()));
 
   if (idx >= 0) {
     closeTab(idx);
@@ -207,16 +220,18 @@ void TabWidget::closeCurrentTab() {
   closeTab(currentIndex());
 }
 
-int TabWidget::addNewspaperView(RootItem* root, const QList<Message>& messages) {
-  WebBrowser* browser = new WebBrowser(nullptr, this);
+int TabWidget::addSingleMessageView(RootItem* root, const Message& message) {
+  auto* browser = new MessagePreviewer(this);
+  auto* msg_mdl = qApp->mainForm()->tabWidget()->feedMessageViewer()->messagesView()->sourceModel();
 
-  int index = addTab(browser,
-                     qApp->icons()->fromTheme(QSL("format-justify-fill")),
-                     tr("Newspaper view"),
-                     TabBar::TabType::Closable);
+  connect(browser, &MessagePreviewer::markMessageRead, msg_mdl, &MessagesModel::setMessageReadById);
+  connect(browser, &MessagePreviewer::markMessageImportant, msg_mdl, &MessagesModel::setMessageImportantById);
+  connect(browser, &MessagePreviewer::setMessageLabelIds, msg_mdl, &MessagesModel::setMessageLabelsById);
 
-  QTimer::singleShot(300, browser, [browser, root, messages]() {
-    browser->loadMessages(messages, root);
+  int index = addTab(browser, root->fullIcon(), message.m_title, TabBar::TabType::Closable);
+
+  QTimer::singleShot(500, browser, [browser, root, message]() {
+    browser->loadMessage(message, root);
   });
 
   return index;
@@ -225,6 +240,39 @@ int TabWidget::addNewspaperView(RootItem* root, const QList<Message>& messages) 
 int TabWidget::addEmptyBrowser() {
   return addBrowser(false, true);
 }
+
+#if defined(ENABLE_MEDIAPLAYER)
+int TabWidget::addMediaPlayer(const QString& url, bool make_active) {
+  // #if defined(ENABLE_MEDIAPLAYER_LIBMPV)
+  // QQuickWindow::setGraphicsApi(QSGRendererInterface::GraphicsApi::OpenGL);
+  // #endif
+
+  auto* player = new MediaPlayer(this);
+
+  connect(player,
+          &MediaPlayer::urlDownloadRequested,
+          qApp->downloadManager(),
+          QOverload<const QUrl&>::of(&DownloadManager::download));
+
+  connect(player, &MediaPlayer::closed, this, &TabWidget::closeTabWithSender);
+
+  int index = addTab(player,
+                     qApp->icons()->fromTheme(QSL("player_play"), QSL("media-playback-start")),
+                     tr("Media player"),
+                     TabBar::TabType::Closable);
+
+  if (make_active) {
+    setCurrentIndex(index);
+    player->setFocus(Qt::FocusReason::OtherFocusReason);
+  }
+
+  QTimer::singleShot(3000, player, [player, url]() {
+    player->playUrl(url);
+  });
+
+  return index;
+}
+#endif
 
 int TabWidget::addLinkedBrowser(const QUrl& initial_url) {
   return addBrowser(false, false, initial_url);
@@ -259,7 +307,7 @@ int TabWidget::addBrowser(bool move_after_current, bool make_active, WebBrowser*
   // Make connections.
   connect(browser, &WebBrowser::titleChanged, this, &TabWidget::changeTitle);
   connect(browser, &WebBrowser::iconChanged, this, &TabWidget::changeIcon);
-  connect(browser, &WebBrowser::windowCloseRequested, this, &TabWidget::closeBrowserTab);
+  connect(browser, &WebBrowser::windowCloseRequested, this, &TabWidget::closeTabWithSender);
 
   // Setup the tab index.
   browser->setIndex(final_index);

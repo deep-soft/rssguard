@@ -5,8 +5,10 @@
 #include "gui/messagebox.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
-#include "network-web/adblock/adblockicon.h"
+#include "miscellaneous/settings.h"
 #include "network-web/adblock/adblockmanager.h"
+#include "network-web/apiserver.h"
+#include "network-web/articleparse.h"
 #include "network-web/cookiejar.h"
 #include "network-web/readability.h"
 
@@ -14,7 +16,7 @@
 #include <QProcess>
 #include <QUrl>
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 #include "network-web/webengine/networkurlinterceptor.h"
 
 #if QT_VERSION_MAJOR == 6
@@ -22,16 +24,22 @@
 #else
 #include <QWebEngineDownloadItem>
 #endif
+
 #include <QWebEngineProfile>
 #include <QWebEngineScript>
 #include <QWebEngineScriptCollection>
+#include <QWebEngineSettings>
 #include <QWebEngineUrlScheme>
 #endif
 
-WebFactory::WebFactory(QObject* parent) : QObject(parent), m_customUserAgent(QString()) {
+WebFactory::WebFactory(QObject* parent) : QObject(parent), m_apiServer(nullptr), m_customUserAgent(QString()) {
   m_adBlock = new AdBlockManager(this);
 
-#if defined(USE_WEBENGINE)
+  if (qApp->settings()->value(GROUP(Network), SETTING(Network::EnableApiServer)).toBool()) {
+    startApiServer();
+  }
+
+#if defined(NO_LITE)
   if (qApp->settings()->value(GROUP(Browser), SETTING(Browser::DisableCache)).toBool()) {
     qWarningNN << LOGSEC_NETWORK << "Using off-the-record WebEngine profile.";
 
@@ -47,8 +55,9 @@ WebFactory::WebFactory(QObject* parent) : QObject(parent), m_customUserAgent(QSt
 
   m_cookieJar = new CookieJar(this);
   m_readability = new Readability(this);
+  m_articleParse = new ArticleParse(this);
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 #if QT_VERSION >= 0x050D00 // Qt >= 5.13.0
   m_engineProfile->setUrlRequestInterceptor(m_urlInterceptor);
 #else
@@ -58,7 +67,9 @@ WebFactory::WebFactory(QObject* parent) : QObject(parent), m_customUserAgent(QSt
 }
 
 WebFactory::~WebFactory() {
-#if defined(USE_WEBENGINE)
+  stopApiServer();
+
+#if defined(NO_LITE)
   if (m_engineSettings != nullptr && m_engineSettings->menu() != nullptr) {
     m_engineSettings->menu()->deleteLater();
   }
@@ -89,8 +100,40 @@ bool WebFactory::sendMessageViaEmail(const Message& message) {
   }
 }
 
-bool WebFactory::openUrlInExternalBrowser(const QString& url) const {
-  qDebugNN << LOGSEC_NETWORK << "We are trying to open URL" << QUOTE_W_SPACE_DOT(url);
+#if defined(NO_LITE)
+void WebFactory::loadCustomCss(const QString user_styles_path) {
+  if (QFile::exists(user_styles_path)) {
+    QByteArray css_data = IOFactory::readFile(user_styles_path);
+    QString name = "rssguard-user-styles";
+    QWebEngineScript script;
+    QString s = QSL("(function() {"
+                    "  css = document.createElement('style');"
+                    "  css.type = 'text/css';"
+                    "  css.id = '%1';"
+                    "  document.head.appendChild(css);"
+                    "  css.innerText = '%2';"
+                    "})()")
+                  .arg(name, css_data.simplified());
+    script.setName(name);
+    script.setSourceCode(s);
+    script.setInjectionPoint(QWebEngineScript::DocumentReady);
+    script.setRunsOnSubFrames(false);
+    script.setWorldId(QWebEngineScript::ApplicationWorld);
+
+    m_engineProfile->scripts()->insert(script);
+
+    qDebugNN << LOGSEC_CORE << "Loading user CSS style file" << QUOTE_W_SPACE_DOT(user_styles_path);
+  }
+  else {
+    qWarningNN << LOGSEC_CORE << "User CSS style was not provided in file" << QUOTE_W_SPACE_DOT(user_styles_path);
+  }
+}
+#endif
+
+bool WebFactory::openUrlInExternalBrowser(const QUrl& url) const {
+  QString my_url = url.toString(QUrl::ComponentFormattingOption::FullyEncoded);
+
+  qDebugNN << LOGSEC_NETWORK << "We are trying to open URL" << QUOTE_W_SPACE_DOT(my_url);
 
   bool result = false;
 
@@ -99,7 +142,7 @@ bool WebFactory::openUrlInExternalBrowser(const QString& url) const {
       qApp->settings()->value(GROUP(Browser), SETTING(Browser::CustomExternalBrowserExecutable)).toString();
     const QString arguments =
       qApp->settings()->value(GROUP(Browser), SETTING(Browser::CustomExternalBrowserArguments)).toString();
-    const auto nice_args = arguments.arg(url);
+    const auto nice_args = arguments.arg(my_url);
 
     qDebugNN << LOGSEC_NETWORK << "Arguments for external browser:" << QUOTE_W_SPACE_DOT(nice_args);
 
@@ -110,7 +153,7 @@ bool WebFactory::openUrlInExternalBrowser(const QString& url) const {
     }
   }
   else {
-    result = QDesktopServices::openUrl(url);
+    result = QDesktopServices::openUrl(my_url);
   }
 
   if (!result) {
@@ -122,7 +165,7 @@ bool WebFactory::openUrlInExternalBrowser(const QString& url) const {
                     "below website URL in your web browser manually.")
                    .arg(QSL(APP_NAME)),
                  {},
-                 url,
+                 my_url,
                  QMessageBox::StandardButton::Ok);
   }
 
@@ -130,7 +173,9 @@ bool WebFactory::openUrlInExternalBrowser(const QString& url) const {
 }
 
 QString WebFactory::stripTags(QString text) {
-  return text.remove(QRegularExpression(QSL("<[^>]*>")));
+  static QRegularExpression reg_tags(QSL("<[^>]*>"));
+
+  return text.remove(reg_tags);
 }
 
 QString WebFactory::unescapeHtml(const QString& html) {
@@ -138,9 +183,7 @@ QString WebFactory::unescapeHtml(const QString& html) {
     return html;
   }
 
-  if (m_htmlNamedEntities.isEmpty()) {
-    generateUnescapes();
-  }
+  static QMap<QString, char16_t> entities = generateUnescapes();
 
   QString output;
   output.reserve(html.size());
@@ -181,7 +224,7 @@ QString WebFactory::unescapeHtml(const QString& html) {
           }
 
           if (number > 0U) {
-            output.append(QChar(number));
+            output.append(QString::fromUcs4((const char32_t*)&number, 1));
           }
           else {
             // Failed to convert to number, leave intact.
@@ -195,9 +238,9 @@ QString WebFactory::unescapeHtml(const QString& html) {
           // We have named entity.
           auto entity_name = html.mid(pos + 1, pos_end - pos - 1);
 
-          if (m_htmlNamedEntities.contains(entity_name)) {
+          if (entities.contains(entity_name)) {
             // Entity found, proceed.
-            output.append(m_htmlNamedEntities.value(entity_name));
+            output.append(entities.value(entity_name));
           }
           else {
             // Entity NOT found, leave intact.
@@ -224,6 +267,125 @@ QString WebFactory::unescapeHtml(const QString& html) {
    */
 
   return output;
+}
+
+QString WebFactory::limitSizeOfHtmlImages(const QString& html, int desired_width, int desired_max_height) const {
+  static QRegularExpression exp_image_tag(QSL("<img ([^>]+)>"));
+  static QRegularExpression exp_image_attrs(QSL("(\\w+)=\"([^\"]+)\""));
+  static bool is_lite = qApp->usingLite();
+
+  // Replace too big pictures. What it exactly does:
+  //  - find all <img> tags and check for existence of height/width attributes:
+  //    - both found -> keep aspect ratio and change to fit width if too big (or limit height if configured)
+  //    - height found only -> limit height if configured
+  //    - width found only -> change to fit width if too big
+  //    - nothing found (image dimensions are taken directly from picture) -> limit height if configured,
+  QRegularExpressionMatch exp_match;
+  qsizetype match_offset = 0;
+  QString my_html = html;
+  QElapsedTimer tmr;
+
+#if !defined(NDEBUG)
+  // IOFactory::writeFile("a.html", html.toUtf8());
+#endif
+
+  tmr.start();
+
+  while ((exp_match = exp_image_tag.match(my_html, match_offset)).hasMatch()) {
+    QString img_reconstructed = QSL("<img");
+
+    // QString full = exp_match.captured();
+    // auto aa = exp_match.capturedLength();
+
+    QString img_tag_inner_text = exp_match.captured(1);
+
+    // We found image, now we parse its attributes and process them.
+    QRegularExpressionMatchIterator attrs_match_iter = exp_image_attrs.globalMatch(img_tag_inner_text);
+    QMap<QString, QString> attrs;
+
+    while (attrs_match_iter.hasNext()) {
+      QRegularExpressionMatch attrs_match = attrs_match_iter.next();
+
+      QString attr_name = attrs_match.captured(1);
+      QString attr_value = attrs_match.captured(2);
+
+      attrs.insert(attr_name, attr_value);
+    }
+
+    // Now, we edit height/width differently, depending whether this is
+    // simpler HTML (lite) viewer, or WebEngine full-blown viewer.
+    if (is_lite) {
+      if (attrs.contains("height") && attrs.contains("width")) {
+        double ratio = attrs.value("width").toDouble() / attrs.value("height").toDouble();
+
+        if (desired_max_height > 0) {
+          // We limit height.
+          attrs.insert("height", QString::number(desired_max_height));
+          attrs.insert("width", QString::number(int(ratio * desired_max_height)));
+        }
+
+        // We fit width.
+        if (attrs.value("width").toInt() > desired_width) {
+          attrs.insert("width", QString::number(desired_width));
+          attrs.insert("height", QString::number(int(desired_width / ratio)));
+        }
+      }
+      else if (attrs.contains("width")) {
+        // Only width.
+        if (attrs.value("width").toInt() > desired_width) {
+          attrs.insert("width", QString::number(desired_width));
+        }
+      }
+      else {
+        // No dimensions given.
+        // In this case we simply rely on original image dimensions
+        // if no specific limit is set.
+        // Too wide images will get downscaled.
+        if (desired_max_height > 0) {
+          attrs.insert("height", QString::number(desired_max_height));
+        }
+      }
+    }
+    else {
+      attrs.remove("width");
+      attrs.remove("height");
+
+      if (desired_max_height > 0) {
+        attrs.insert("style", QSL("max-height: %1px !important;").arg(desired_max_height));
+      }
+    }
+
+    // Re-insert all attributes.
+    while (!attrs.isEmpty()) {
+      auto first_key = attrs.firstKey();
+      auto first_value = attrs.first();
+
+      img_reconstructed += QSL(" %1=\"%2\"").arg(first_key, first_value);
+
+      attrs.remove(first_key);
+    }
+
+    img_reconstructed += QSL(">");
+
+    my_html = my_html.replace(exp_match.capturedStart(), exp_match.capturedLength(), img_reconstructed);
+
+    /*if (found_width > desired_width) {
+      qWarningNN << LOGSEC_GUI << "Element" << QUOTE_W_SPACE(exp_match.captured())
+                 << "is too wide, setting smaller value to prevent horizontal scrollbars.";
+
+      my_html =
+        my_html.replace(exp_match.capturedStart(1), exp_match.capturedLength(1), QString::number(desired_width));
+    }*/
+
+    match_offset = exp_match.capturedStart() + img_reconstructed.size();
+  }
+
+#if !defined(NDEBUG)
+  // IOFactory::writeFile("b.html", my_html.toUtf8());
+#endif
+
+  qDebugNN << LOGSEC_GUI << "HTML image resizing took" << NONQUOTE_W_SPACE(tmr.elapsed()) << "miliseconds.";
+  return my_html;
 }
 
 QString WebFactory::processFeedUriScheme(const QString& url) {
@@ -275,7 +437,7 @@ AdBlockManager* WebFactory::adBlock() const {
   return m_adBlock;
 }
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 NetworkUrlInterceptor* WebFactory::urlIinterceptor() const {
   return m_urlInterceptor;
 }
@@ -379,7 +541,10 @@ void WebFactory::webEngineSettingChanged(bool enabled) {
   m_engineProfile->settings()->setAttribute(attribute, act->isChecked());
 }
 
-QAction* WebFactory::createEngineSettingsAction(const QString& title, QWebEngineSettings::WebAttribute attribute) {
+QAction* WebFactory::createEngineSettingsAction(const QString& title, int web_attribute) {
+  // TODO: ověřit že cast je funkční
+  QWebEngineSettings::WebAttribute attribute = QWebEngineSettings::WebAttribute(web_attribute);
+
   auto* act = new QAction(title, m_engineSettings->menu());
 
   act->setData(attribute);
@@ -405,265 +570,288 @@ Readability* WebFactory::readability() const {
   return m_readability;
 }
 
-void WebFactory::generateUnescapes() {
-  m_htmlNamedEntities[QSL("AElig")] = 0x00c6;
-  m_htmlNamedEntities[QSL("AMP")] = 38;
-  m_htmlNamedEntities[QSL("Aacute")] = 0x00c1;
-  m_htmlNamedEntities[QSL("Acirc")] = 0x00c2;
-  m_htmlNamedEntities[QSL("Agrave")] = 0x00c0;
-  m_htmlNamedEntities[QSL("Alpha")] = 0x0391;
-  m_htmlNamedEntities[QSL("Aring")] = 0x00c5;
-  m_htmlNamedEntities[QSL("Atilde")] = 0x00c3;
-  m_htmlNamedEntities[QSL("Auml")] = 0x00c4;
-  m_htmlNamedEntities[QSL("Beta")] = 0x0392;
-  m_htmlNamedEntities[QSL("Ccedil")] = 0x00c7;
-  m_htmlNamedEntities[QSL("Chi")] = 0x03a7;
-  m_htmlNamedEntities[QSL("Dagger")] = 0x2021;
-  m_htmlNamedEntities[QSL("Delta")] = 0x0394;
-  m_htmlNamedEntities[QSL("ETH")] = 0x00d0;
-  m_htmlNamedEntities[QSL("Eacute")] = 0x00c9;
-  m_htmlNamedEntities[QSL("Ecirc")] = 0x00ca;
-  m_htmlNamedEntities[QSL("Egrave")] = 0x00c8;
-  m_htmlNamedEntities[QSL("Epsilon")] = 0x0395;
-  m_htmlNamedEntities[QSL("Eta")] = 0x0397;
-  m_htmlNamedEntities[QSL("Euml")] = 0x00cb;
-  m_htmlNamedEntities[QSL("GT")] = 62;
-  m_htmlNamedEntities[QSL("Gamma")] = 0x0393;
-  m_htmlNamedEntities[QSL("Iacute")] = 0x00cd;
-  m_htmlNamedEntities[QSL("Icirc")] = 0x00ce;
-  m_htmlNamedEntities[QSL("Igrave")] = 0x00cc;
-  m_htmlNamedEntities[QSL("Iota")] = 0x0399;
-  m_htmlNamedEntities[QSL("Iuml")] = 0x00cf;
-  m_htmlNamedEntities[QSL("Kappa")] = 0x039a;
-  m_htmlNamedEntities[QSL("LT")] = 60;
-  m_htmlNamedEntities[QSL("Lambda")] = 0x039b;
-  m_htmlNamedEntities[QSL("Mu")] = 0x039c;
-  m_htmlNamedEntities[QSL("Ntilde")] = 0x00d1;
-  m_htmlNamedEntities[QSL("Nu")] = 0x039d;
-  m_htmlNamedEntities[QSL("OElig")] = 0x0152;
-  m_htmlNamedEntities[QSL("Oacute")] = 0x00d3;
-  m_htmlNamedEntities[QSL("Ocirc")] = 0x00d4;
-  m_htmlNamedEntities[QSL("Ograve")] = 0x00d2;
-  m_htmlNamedEntities[QSL("Omega")] = 0x03a9;
-  m_htmlNamedEntities[QSL("Omicron")] = 0x039f;
-  m_htmlNamedEntities[QSL("Oslash")] = 0x00d8;
-  m_htmlNamedEntities[QSL("Otilde")] = 0x00d5;
-  m_htmlNamedEntities[QSL("Ouml")] = 0x00d6;
-  m_htmlNamedEntities[QSL("Phi")] = 0x03a6;
-  m_htmlNamedEntities[QSL("Pi")] = 0x03a0;
-  m_htmlNamedEntities[QSL("Prime")] = 0x2033;
-  m_htmlNamedEntities[QSL("Psi")] = 0x03a8;
-  m_htmlNamedEntities[QSL("QUOT")] = 34;
-  m_htmlNamedEntities[QSL("Rho")] = 0x03a1;
-  m_htmlNamedEntities[QSL("Scaron")] = 0x0160;
-  m_htmlNamedEntities[QSL("Sigma")] = 0x03a3;
-  m_htmlNamedEntities[QSL("THORN")] = 0x00de;
-  m_htmlNamedEntities[QSL("Tau")] = 0x03a4;
-  m_htmlNamedEntities[QSL("Theta")] = 0x0398;
-  m_htmlNamedEntities[QSL("Uacute")] = 0x00da;
-  m_htmlNamedEntities[QSL("Ucirc")] = 0x00db;
-  m_htmlNamedEntities[QSL("Ugrave")] = 0x00d9;
-  m_htmlNamedEntities[QSL("Upsilon")] = 0x03a5;
-  m_htmlNamedEntities[QSL("Uuml")] = 0x00dc;
-  m_htmlNamedEntities[QSL("Xi")] = 0x039e;
-  m_htmlNamedEntities[QSL("Yacute")] = 0x00dd;
-  m_htmlNamedEntities[QSL("Yuml")] = 0x0178;
-  m_htmlNamedEntities[QSL("Zeta")] = 0x0396;
-  m_htmlNamedEntities[QSL("aacute")] = 0x00e1;
-  m_htmlNamedEntities[QSL("acirc")] = 0x00e2;
-  m_htmlNamedEntities[QSL("acute")] = 0x00b4;
-  m_htmlNamedEntities[QSL("aelig")] = 0x00e6;
-  m_htmlNamedEntities[QSL("agrave")] = 0x00e0;
-  m_htmlNamedEntities[QSL("alefsym")] = 0x2135;
-  m_htmlNamedEntities[QSL("alpha")] = 0x03b1;
-  m_htmlNamedEntities[QSL("amp")] = 38;
-  m_htmlNamedEntities[QSL("and")] = 0x22a5;
-  m_htmlNamedEntities[QSL("ang")] = 0x2220;
-  m_htmlNamedEntities[QSL("apos")] = 0x0027;
-  m_htmlNamedEntities[QSL("aring")] = 0x00e5;
-  m_htmlNamedEntities[QSL("asymp")] = 0x2248;
-  m_htmlNamedEntities[QSL("atilde")] = 0x00e3;
-  m_htmlNamedEntities[QSL("auml")] = 0x00e4;
-  m_htmlNamedEntities[QSL("bdquo")] = 0x201e;
-  m_htmlNamedEntities[QSL("beta")] = 0x03b2;
-  m_htmlNamedEntities[QSL("brvbar")] = 0x00a6;
-  m_htmlNamedEntities[QSL("bull")] = 0x2022;
-  m_htmlNamedEntities[QSL("cap")] = 0x2229;
-  m_htmlNamedEntities[QSL("ccedil")] = 0x00e7;
-  m_htmlNamedEntities[QSL("cedil")] = 0x00b8;
-  m_htmlNamedEntities[QSL("cent")] = 0x00a2;
-  m_htmlNamedEntities[QSL("chi")] = 0x03c7;
-  m_htmlNamedEntities[QSL("circ")] = 0x02c6;
-  m_htmlNamedEntities[QSL("clubs")] = 0x2663;
-  m_htmlNamedEntities[QSL("cong")] = 0x2245;
-  m_htmlNamedEntities[QSL("copy")] = 0x00a9;
-  m_htmlNamedEntities[QSL("crarr")] = 0x21b5;
-  m_htmlNamedEntities[QSL("cup")] = 0x222a;
-  m_htmlNamedEntities[QSL("curren")] = 0x00a4;
-  m_htmlNamedEntities[QSL("dArr")] = 0x21d3;
-  m_htmlNamedEntities[QSL("dagger")] = 0x2020;
-  m_htmlNamedEntities[QSL("darr")] = 0x2193;
-  m_htmlNamedEntities[QSL("deg")] = 0x00b0;
-  m_htmlNamedEntities[QSL("delta")] = 0x03b4;
-  m_htmlNamedEntities[QSL("diams")] = 0x2666;
-  m_htmlNamedEntities[QSL("divide")] = 0x00f7;
-  m_htmlNamedEntities[QSL("eacute")] = 0x00e9;
-  m_htmlNamedEntities[QSL("ecirc")] = 0x00ea;
-  m_htmlNamedEntities[QSL("egrave")] = 0x00e8;
-  m_htmlNamedEntities[QSL("empty")] = 0x2205;
-  m_htmlNamedEntities[QSL("emsp")] = 0x2003;
-  m_htmlNamedEntities[QSL("ensp")] = 0x2002;
-  m_htmlNamedEntities[QSL("epsilon")] = 0x03b5;
-  m_htmlNamedEntities[QSL("equiv")] = 0x2261;
-  m_htmlNamedEntities[QSL("eta")] = 0x03b7;
-  m_htmlNamedEntities[QSL("eth")] = 0x00f0;
-  m_htmlNamedEntities[QSL("euml")] = 0x00eb;
-  m_htmlNamedEntities[QSL("euro")] = 0x20ac;
-  m_htmlNamedEntities[QSL("exist")] = 0x2203;
-  m_htmlNamedEntities[QSL("fnof")] = 0x0192;
-  m_htmlNamedEntities[QSL("forall")] = 0x2200;
-  m_htmlNamedEntities[QSL("frac12")] = 0x00bd;
-  m_htmlNamedEntities[QSL("frac14")] = 0x00bc;
-  m_htmlNamedEntities[QSL("frac34")] = 0x00be;
-  m_htmlNamedEntities[QSL("frasl")] = 0x2044;
-  m_htmlNamedEntities[QSL("gamma")] = 0x03b3;
-  m_htmlNamedEntities[QSL("ge")] = 0x2265;
-  m_htmlNamedEntities[QSL("gt")] = 62;
-  m_htmlNamedEntities[QSL("hArr")] = 0x21d4;
-  m_htmlNamedEntities[QSL("harr")] = 0x2194;
-  m_htmlNamedEntities[QSL("hearts")] = 0x2665;
-  m_htmlNamedEntities[QSL("hellip")] = 0x2026;
-  m_htmlNamedEntities[QSL("iacute")] = 0x00ed;
-  m_htmlNamedEntities[QSL("icirc")] = 0x00ee;
-  m_htmlNamedEntities[QSL("iexcl")] = 0x00a1;
-  m_htmlNamedEntities[QSL("igrave")] = 0x00ec;
-  m_htmlNamedEntities[QSL("image")] = 0x2111;
-  m_htmlNamedEntities[QSL("infin")] = 0x221e;
-  m_htmlNamedEntities[QSL("int")] = 0x222b;
-  m_htmlNamedEntities[QSL("iota")] = 0x03b9;
-  m_htmlNamedEntities[QSL("iquest")] = 0x00bf;
-  m_htmlNamedEntities[QSL("isin")] = 0x2208;
-  m_htmlNamedEntities[QSL("iuml")] = 0x00ef;
-  m_htmlNamedEntities[QSL("kappa")] = 0x03ba;
-  m_htmlNamedEntities[QSL("lArr")] = 0x21d0;
-  m_htmlNamedEntities[QSL("lambda")] = 0x03bb;
-  m_htmlNamedEntities[QSL("lang")] = 0x2329;
-  m_htmlNamedEntities[QSL("laquo")] = 0x00ab;
-  m_htmlNamedEntities[QSL("larr")] = 0x2190;
-  m_htmlNamedEntities[QSL("lceil")] = 0x2308;
-  m_htmlNamedEntities[QSL("ldquo")] = 0x201c;
-  m_htmlNamedEntities[QSL("le")] = 0x2264;
-  m_htmlNamedEntities[QSL("lfloor")] = 0x230a;
-  m_htmlNamedEntities[QSL("lowast")] = 0x2217;
-  m_htmlNamedEntities[QSL("loz")] = 0x25ca;
-  m_htmlNamedEntities[QSL("lrm")] = 0x200e;
-  m_htmlNamedEntities[QSL("lsaquo")] = 0x2039;
-  m_htmlNamedEntities[QSL("lsquo")] = 0x2018;
-  m_htmlNamedEntities[QSL("lt")] = 60;
-  m_htmlNamedEntities[QSL("macr")] = 0x00af;
-  m_htmlNamedEntities[QSL("mdash")] = 0x2014;
-  m_htmlNamedEntities[QSL("micro")] = 0x00b5;
-  m_htmlNamedEntities[QSL("middot")] = 0x00b7;
-  m_htmlNamedEntities[QSL("minus")] = 0x2212;
-  m_htmlNamedEntities[QSL("mu")] = 0x03bc;
-  m_htmlNamedEntities[QSL("nabla")] = 0x2207;
-  m_htmlNamedEntities[QSL("nbsp")] = 0x00a0;
-  m_htmlNamedEntities[QSL("ndash")] = 0x2013;
-  m_htmlNamedEntities[QSL("ne")] = 0x2260;
-  m_htmlNamedEntities[QSL("ni")] = 0x220b;
-  m_htmlNamedEntities[QSL("not")] = 0x00ac;
-  m_htmlNamedEntities[QSL("notin")] = 0x2209;
-  m_htmlNamedEntities[QSL("nsub")] = 0x2284;
-  m_htmlNamedEntities[QSL("ntilde")] = 0x00f1;
-  m_htmlNamedEntities[QSL("nu")] = 0x03bd;
-  m_htmlNamedEntities[QSL("oacute")] = 0x00f3;
-  m_htmlNamedEntities[QSL("ocirc")] = 0x00f4;
-  m_htmlNamedEntities[QSL("oelig")] = 0x0153;
-  m_htmlNamedEntities[QSL("ograve")] = 0x00f2;
-  m_htmlNamedEntities[QSL("oline")] = 0x203e;
-  m_htmlNamedEntities[QSL("omega")] = 0x03c9;
-  m_htmlNamedEntities[QSL("omicron")] = 0x03bf;
-  m_htmlNamedEntities[QSL("oplus")] = 0x2295;
-  m_htmlNamedEntities[QSL("or")] = 0x22a6;
-  m_htmlNamedEntities[QSL("ordf")] = 0x00aa;
-  m_htmlNamedEntities[QSL("ordm")] = 0x00ba;
-  m_htmlNamedEntities[QSL("oslash")] = 0x00f8;
-  m_htmlNamedEntities[QSL("otilde")] = 0x00f5;
-  m_htmlNamedEntities[QSL("otimes")] = 0x2297;
-  m_htmlNamedEntities[QSL("ouml")] = 0x00f6;
-  m_htmlNamedEntities[QSL("para")] = 0x00b6;
-  m_htmlNamedEntities[QSL("part")] = 0x2202;
-  m_htmlNamedEntities[QSL("percnt")] = 0x0025;
-  m_htmlNamedEntities[QSL("permil")] = 0x2030;
-  m_htmlNamedEntities[QSL("perp")] = 0x22a5;
-  m_htmlNamedEntities[QSL("phi")] = 0x03c6;
-  m_htmlNamedEntities[QSL("pi")] = 0x03c0;
-  m_htmlNamedEntities[QSL("piv")] = 0x03d6;
-  m_htmlNamedEntities[QSL("plusmn")] = 0x00b1;
-  m_htmlNamedEntities[QSL("pound")] = 0x00a3;
-  m_htmlNamedEntities[QSL("prime")] = 0x2032;
-  m_htmlNamedEntities[QSL("prod")] = 0x220f;
-  m_htmlNamedEntities[QSL("prop")] = 0x221d;
-  m_htmlNamedEntities[QSL("psi")] = 0x03c8;
-  m_htmlNamedEntities[QSL("quot")] = 34;
-  m_htmlNamedEntities[QSL("rArr")] = 0x21d2;
-  m_htmlNamedEntities[QSL("radic")] = 0x221a;
-  m_htmlNamedEntities[QSL("rang")] = 0x232a;
-  m_htmlNamedEntities[QSL("raquo")] = 0x00bb;
-  m_htmlNamedEntities[QSL("rarr")] = 0x2192;
-  m_htmlNamedEntities[QSL("rceil")] = 0x2309;
-  m_htmlNamedEntities[QSL("rdquo")] = 0x201d;
-  m_htmlNamedEntities[QSL("real")] = 0x211c;
-  m_htmlNamedEntities[QSL("reg")] = 0x00ae;
-  m_htmlNamedEntities[QSL("rfloor")] = 0x230b;
-  m_htmlNamedEntities[QSL("rho")] = 0x03c1;
-  m_htmlNamedEntities[QSL("rlm")] = 0x200f;
-  m_htmlNamedEntities[QSL("rsaquo")] = 0x203a;
-  m_htmlNamedEntities[QSL("rsquo")] = 0x2019;
-  m_htmlNamedEntities[QSL("sbquo")] = 0x201a;
-  m_htmlNamedEntities[QSL("scaron")] = 0x0161;
-  m_htmlNamedEntities[QSL("sdot")] = 0x22c5;
-  m_htmlNamedEntities[QSL("sect")] = 0x00a7;
-  m_htmlNamedEntities[QSL("shy")] = 0x00ad;
-  m_htmlNamedEntities[QSL("sigma")] = 0x03c3;
-  m_htmlNamedEntities[QSL("sigmaf")] = 0x03c2;
-  m_htmlNamedEntities[QSL("sim")] = 0x223c;
-  m_htmlNamedEntities[QSL("spades")] = 0x2660;
-  m_htmlNamedEntities[QSL("sub")] = 0x2282;
-  m_htmlNamedEntities[QSL("sube")] = 0x2286;
-  m_htmlNamedEntities[QSL("sum")] = 0x2211;
-  m_htmlNamedEntities[QSL("sup")] = 0x2283;
-  m_htmlNamedEntities[QSL("sup1")] = 0x00b9;
-  m_htmlNamedEntities[QSL("sup2")] = 0x00b2;
-  m_htmlNamedEntities[QSL("sup3")] = 0x00b3;
-  m_htmlNamedEntities[QSL("supe")] = 0x2287;
-  m_htmlNamedEntities[QSL("szlig")] = 0x00df;
-  m_htmlNamedEntities[QSL("tau")] = 0x03c4;
-  m_htmlNamedEntities[QSL("there4")] = 0x2234;
-  m_htmlNamedEntities[QSL("theta")] = 0x03b8;
-  m_htmlNamedEntities[QSL("thetasym")] = 0x03d1;
-  m_htmlNamedEntities[QSL("thinsp")] = 0x2009;
-  m_htmlNamedEntities[QSL("thorn")] = 0x00fe;
-  m_htmlNamedEntities[QSL("tilde")] = 0x02dc;
-  m_htmlNamedEntities[QSL("times")] = 0x00d7;
-  m_htmlNamedEntities[QSL("trade")] = 0x2122;
-  m_htmlNamedEntities[QSL("uArr")] = 0x21d1;
-  m_htmlNamedEntities[QSL("uacute")] = 0x00fa;
-  m_htmlNamedEntities[QSL("uarr")] = 0x2191;
-  m_htmlNamedEntities[QSL("ucirc")] = 0x00fb;
-  m_htmlNamedEntities[QSL("ugrave")] = 0x00f9;
-  m_htmlNamedEntities[QSL("uml")] = 0x00a8;
-  m_htmlNamedEntities[QSL("upsih")] = 0x03d2;
-  m_htmlNamedEntities[QSL("upsilon")] = 0x03c5;
-  m_htmlNamedEntities[QSL("uuml")] = 0x00fc;
-  m_htmlNamedEntities[QSL("weierp")] = 0x2118;
-  m_htmlNamedEntities[QSL("xi")] = 0x03be;
-  m_htmlNamedEntities[QSL("yacute")] = 0x00fd;
-  m_htmlNamedEntities[QSL("yen")] = 0x00a5;
-  m_htmlNamedEntities[QSL("yuml")] = 0x00ff;
-  m_htmlNamedEntities[QSL("zeta")] = 0x03b6;
-  m_htmlNamedEntities[QSL("zwj")] = 0x200d;
-  m_htmlNamedEntities[QSL("zwnj")] = 0x200c;
+ArticleParse* WebFactory::articleParse() const {
+  return m_articleParse;
+}
+
+void WebFactory::startApiServer() {
+  m_apiServer = new ApiServer(this);
+  m_apiServer->setListenAddressPort(QSL("http://localhost:54123"), true);
+
+  qDebugNN << LOGSEC_NETWORK << "Started API server:" << QUOTE_W_SPACE_DOT(m_apiServer->listenAddressPort());
+}
+
+void WebFactory::stopApiServer() {
+  if (m_apiServer != nullptr) {
+    qDebugNN << LOGSEC_NETWORK << "Stopped API server:" << QUOTE_W_SPACE_DOT(m_apiServer->listenAddressPort());
+
+    delete m_apiServer;
+    m_apiServer = nullptr;
+  }
+}
+
+QMap<QString, char16_t> WebFactory::generateUnescapes() {
+  QMap<QString, char16_t> res;
+  res[QSL("AElig")] = 0x00c6;
+  res[QSL("AMP")] = 38;
+  res[QSL("Aacute")] = 0x00c1;
+  res[QSL("Acirc")] = 0x00c2;
+  res[QSL("Agrave")] = 0x00c0;
+  res[QSL("Alpha")] = 0x0391;
+  res[QSL("Aring")] = 0x00c5;
+  res[QSL("Atilde")] = 0x00c3;
+  res[QSL("Auml")] = 0x00c4;
+  res[QSL("Beta")] = 0x0392;
+  res[QSL("Ccedil")] = 0x00c7;
+  res[QSL("Chi")] = 0x03a7;
+  res[QSL("Dagger")] = 0x2021;
+  res[QSL("Delta")] = 0x0394;
+  res[QSL("ETH")] = 0x00d0;
+  res[QSL("Eacute")] = 0x00c9;
+  res[QSL("Ecirc")] = 0x00ca;
+  res[QSL("Egrave")] = 0x00c8;
+  res[QSL("Epsilon")] = 0x0395;
+  res[QSL("Eta")] = 0x0397;
+  res[QSL("Euml")] = 0x00cb;
+  res[QSL("GT")] = 62;
+  res[QSL("Gamma")] = 0x0393;
+  res[QSL("Iacute")] = 0x00cd;
+  res[QSL("Icirc")] = 0x00ce;
+  res[QSL("Igrave")] = 0x00cc;
+  res[QSL("Iota")] = 0x0399;
+  res[QSL("Iuml")] = 0x00cf;
+  res[QSL("Kappa")] = 0x039a;
+  res[QSL("LT")] = 60;
+  res[QSL("Lambda")] = 0x039b;
+  res[QSL("Mu")] = 0x039c;
+  res[QSL("Ntilde")] = 0x00d1;
+  res[QSL("Nu")] = 0x039d;
+  res[QSL("OElig")] = 0x0152;
+  res[QSL("Oacute")] = 0x00d3;
+  res[QSL("Ocirc")] = 0x00d4;
+  res[QSL("Ograve")] = 0x00d2;
+  res[QSL("Omega")] = 0x03a9;
+  res[QSL("Omicron")] = 0x039f;
+  res[QSL("Oslash")] = 0x00d8;
+  res[QSL("Otilde")] = 0x00d5;
+  res[QSL("Ouml")] = 0x00d6;
+  res[QSL("Phi")] = 0x03a6;
+  res[QSL("Pi")] = 0x03a0;
+  res[QSL("Prime")] = 0x2033;
+  res[QSL("Psi")] = 0x03a8;
+  res[QSL("QUOT")] = 34;
+  res[QSL("Rho")] = 0x03a1;
+  res[QSL("Scaron")] = 0x0160;
+  res[QSL("Sigma")] = 0x03a3;
+  res[QSL("THORN")] = 0x00de;
+  res[QSL("Tau")] = 0x03a4;
+  res[QSL("Theta")] = 0x0398;
+  res[QSL("Uacute")] = 0x00da;
+  res[QSL("Ucirc")] = 0x00db;
+  res[QSL("Ugrave")] = 0x00d9;
+  res[QSL("Upsilon")] = 0x03a5;
+  res[QSL("Uuml")] = 0x00dc;
+  res[QSL("Xi")] = 0x039e;
+  res[QSL("Yacute")] = 0x00dd;
+  res[QSL("Yuml")] = 0x0178;
+  res[QSL("Zeta")] = 0x0396;
+  res[QSL("aacute")] = 0x00e1;
+  res[QSL("acirc")] = 0x00e2;
+  res[QSL("acute")] = 0x00b4;
+  res[QSL("aelig")] = 0x00e6;
+  res[QSL("agrave")] = 0x00e0;
+  res[QSL("alefsym")] = 0x2135;
+  res[QSL("alpha")] = 0x03b1;
+  res[QSL("amp")] = 38;
+  res[QSL("and")] = 0x22a5;
+  res[QSL("ang")] = 0x2220;
+  res[QSL("apos")] = 0x0027;
+  res[QSL("aring")] = 0x00e5;
+  res[QSL("asymp")] = 0x2248;
+  res[QSL("atilde")] = 0x00e3;
+  res[QSL("auml")] = 0x00e4;
+  res[QSL("bdquo")] = 0x201e;
+  res[QSL("beta")] = 0x03b2;
+  res[QSL("brvbar")] = 0x00a6;
+  res[QSL("bull")] = 0x2022;
+  res[QSL("cap")] = 0x2229;
+  res[QSL("ccedil")] = 0x00e7;
+  res[QSL("cedil")] = 0x00b8;
+  res[QSL("cent")] = 0x00a2;
+  res[QSL("chi")] = 0x03c7;
+  res[QSL("circ")] = 0x02c6;
+  res[QSL("clubs")] = 0x2663;
+  res[QSL("cong")] = 0x2245;
+  res[QSL("copy")] = 0x00a9;
+  res[QSL("crarr")] = 0x21b5;
+  res[QSL("cup")] = 0x222a;
+  res[QSL("curren")] = 0x00a4;
+  res[QSL("dArr")] = 0x21d3;
+  res[QSL("dagger")] = 0x2020;
+  res[QSL("darr")] = 0x2193;
+  res[QSL("deg")] = 0x00b0;
+  res[QSL("delta")] = 0x03b4;
+  res[QSL("diams")] = 0x2666;
+  res[QSL("divide")] = 0x00f7;
+  res[QSL("eacute")] = 0x00e9;
+  res[QSL("ecirc")] = 0x00ea;
+  res[QSL("egrave")] = 0x00e8;
+  res[QSL("empty")] = 0x2205;
+  res[QSL("emsp")] = 0x2003;
+  res[QSL("ensp")] = 0x2002;
+  res[QSL("epsilon")] = 0x03b5;
+  res[QSL("equiv")] = 0x2261;
+  res[QSL("eta")] = 0x03b7;
+  res[QSL("eth")] = 0x00f0;
+  res[QSL("euml")] = 0x00eb;
+  res[QSL("euro")] = 0x20ac;
+  res[QSL("exist")] = 0x2203;
+  res[QSL("fnof")] = 0x0192;
+  res[QSL("forall")] = 0x2200;
+  res[QSL("frac12")] = 0x00bd;
+  res[QSL("frac14")] = 0x00bc;
+  res[QSL("frac34")] = 0x00be;
+  res[QSL("frasl")] = 0x2044;
+  res[QSL("gamma")] = 0x03b3;
+  res[QSL("ge")] = 0x2265;
+  res[QSL("gt")] = 62;
+  res[QSL("hArr")] = 0x21d4;
+  res[QSL("harr")] = 0x2194;
+  res[QSL("hearts")] = 0x2665;
+  res[QSL("hellip")] = 0x2026;
+  res[QSL("iacute")] = 0x00ed;
+  res[QSL("icirc")] = 0x00ee;
+  res[QSL("iexcl")] = 0x00a1;
+  res[QSL("igrave")] = 0x00ec;
+  res[QSL("image")] = 0x2111;
+  res[QSL("infin")] = 0x221e;
+  res[QSL("int")] = 0x222b;
+  res[QSL("iota")] = 0x03b9;
+  res[QSL("iquest")] = 0x00bf;
+  res[QSL("isin")] = 0x2208;
+  res[QSL("iuml")] = 0x00ef;
+  res[QSL("kappa")] = 0x03ba;
+  res[QSL("lArr")] = 0x21d0;
+  res[QSL("lambda")] = 0x03bb;
+  res[QSL("lang")] = 0x2329;
+  res[QSL("laquo")] = 0x00ab;
+  res[QSL("larr")] = 0x2190;
+  res[QSL("lceil")] = 0x2308;
+  res[QSL("ldquo")] = 0x201c;
+  res[QSL("le")] = 0x2264;
+  res[QSL("lfloor")] = 0x230a;
+  res[QSL("lowast")] = 0x2217;
+  res[QSL("loz")] = 0x25ca;
+  res[QSL("lrm")] = 0x200e;
+  res[QSL("lsaquo")] = 0x2039;
+  res[QSL("lsquo")] = 0x2018;
+  res[QSL("lt")] = 60;
+  res[QSL("macr")] = 0x00af;
+  res[QSL("mdash")] = 0x2014;
+  res[QSL("micro")] = 0x00b5;
+  res[QSL("middot")] = 0x00b7;
+  res[QSL("minus")] = 0x2212;
+  res[QSL("mu")] = 0x03bc;
+  res[QSL("nabla")] = 0x2207;
+  res[QSL("nbsp")] = 0x00a0;
+  res[QSL("ndash")] = 0x2013;
+  res[QSL("ne")] = 0x2260;
+  res[QSL("ni")] = 0x220b;
+  res[QSL("not")] = 0x00ac;
+  res[QSL("notin")] = 0x2209;
+  res[QSL("nsub")] = 0x2284;
+  res[QSL("ntilde")] = 0x00f1;
+  res[QSL("nu")] = 0x03bd;
+  res[QSL("oacute")] = 0x00f3;
+  res[QSL("ocirc")] = 0x00f4;
+  res[QSL("oelig")] = 0x0153;
+  res[QSL("ograve")] = 0x00f2;
+  res[QSL("oline")] = 0x203e;
+  res[QSL("omega")] = 0x03c9;
+  res[QSL("omicron")] = 0x03bf;
+  res[QSL("oplus")] = 0x2295;
+  res[QSL("or")] = 0x22a6;
+  res[QSL("ordf")] = 0x00aa;
+  res[QSL("ordm")] = 0x00ba;
+  res[QSL("oslash")] = 0x00f8;
+  res[QSL("otilde")] = 0x00f5;
+  res[QSL("otimes")] = 0x2297;
+  res[QSL("ouml")] = 0x00f6;
+  res[QSL("para")] = 0x00b6;
+  res[QSL("part")] = 0x2202;
+  res[QSL("percnt")] = 0x0025;
+  res[QSL("permil")] = 0x2030;
+  res[QSL("perp")] = 0x22a5;
+  res[QSL("phi")] = 0x03c6;
+  res[QSL("pi")] = 0x03c0;
+  res[QSL("piv")] = 0x03d6;
+  res[QSL("plusmn")] = 0x00b1;
+  res[QSL("pound")] = 0x00a3;
+  res[QSL("prime")] = 0x2032;
+  res[QSL("prod")] = 0x220f;
+  res[QSL("prop")] = 0x221d;
+  res[QSL("psi")] = 0x03c8;
+  res[QSL("quot")] = 34;
+  res[QSL("rArr")] = 0x21d2;
+  res[QSL("radic")] = 0x221a;
+  res[QSL("rang")] = 0x232a;
+  res[QSL("raquo")] = 0x00bb;
+  res[QSL("rarr")] = 0x2192;
+  res[QSL("rceil")] = 0x2309;
+  res[QSL("rdquo")] = 0x201d;
+  res[QSL("real")] = 0x211c;
+  res[QSL("reg")] = 0x00ae;
+  res[QSL("rfloor")] = 0x230b;
+  res[QSL("rho")] = 0x03c1;
+  res[QSL("rlm")] = 0x200f;
+  res[QSL("rsaquo")] = 0x203a;
+  res[QSL("rsquo")] = 0x2019;
+  res[QSL("sbquo")] = 0x201a;
+  res[QSL("scaron")] = 0x0161;
+  res[QSL("sdot")] = 0x22c5;
+  res[QSL("sect")] = 0x00a7;
+  res[QSL("shy")] = 0x00ad;
+  res[QSL("sigma")] = 0x03c3;
+  res[QSL("sigmaf")] = 0x03c2;
+  res[QSL("sim")] = 0x223c;
+  res[QSL("spades")] = 0x2660;
+  res[QSL("sub")] = 0x2282;
+  res[QSL("sube")] = 0x2286;
+  res[QSL("sum")] = 0x2211;
+  res[QSL("sup")] = 0x2283;
+  res[QSL("sup1")] = 0x00b9;
+  res[QSL("sup2")] = 0x00b2;
+  res[QSL("sup3")] = 0x00b3;
+  res[QSL("supe")] = 0x2287;
+  res[QSL("szlig")] = 0x00df;
+  res[QSL("tau")] = 0x03c4;
+  res[QSL("there4")] = 0x2234;
+  res[QSL("theta")] = 0x03b8;
+  res[QSL("thetasym")] = 0x03d1;
+  res[QSL("thinsp")] = 0x2009;
+  res[QSL("thorn")] = 0x00fe;
+  res[QSL("tilde")] = 0x02dc;
+  res[QSL("times")] = 0x00d7;
+  res[QSL("trade")] = 0x2122;
+  res[QSL("uArr")] = 0x21d1;
+  res[QSL("uacute")] = 0x00fa;
+  res[QSL("uarr")] = 0x2191;
+  res[QSL("ucirc")] = 0x00fb;
+  res[QSL("ugrave")] = 0x00f9;
+  res[QSL("uml")] = 0x00a8;
+  res[QSL("upsih")] = 0x03d2;
+  res[QSL("upsilon")] = 0x03c5;
+  res[QSL("uuml")] = 0x00fc;
+  res[QSL("weierp")] = 0x2118;
+  res[QSL("xi")] = 0x03be;
+  res[QSL("yacute")] = 0x00fd;
+  res[QSL("yen")] = 0x00a5;
+  res[QSL("yuml")] = 0x00ff;
+  res[QSL("zeta")] = 0x03b6;
+  res[QSL("zwj")] = 0x200d;
+  res[QSL("zwnj")] = 0x200c;
+
+  return res;
 }
 
 QString WebFactory::customUserAgent() const {
@@ -674,7 +862,7 @@ void WebFactory::setCustomUserAgent(const QString& user_agent) {
   m_customUserAgent = user_agent;
 }
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 void WebFactory::cleanupCache() {
   if (MsgBox::show(nullptr,
                    QMessageBox::Icon::Question,

@@ -11,23 +11,24 @@
 #include "gui/messagesview.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
+#include "miscellaneous/settings.h"
 #include "miscellaneous/skinfactory.h"
 #include "miscellaneous/textfactory.h"
 #include "services/abstract/recyclebin.h"
 #include "services/abstract/serviceroot.h"
+
+#include <cmath>
 
 #include <QPainter>
 #include <QPainterPath>
 #include <QSqlError>
 #include <QSqlField>
 
-#include <cmath>
-
 MessagesModel::MessagesModel(QObject* parent)
   : QSqlQueryModel(parent), m_view(nullptr), m_cache(new MessagesModelCache(this)),
     m_messageHighlighter(MessageHighlighter::NoHighlighting), m_customDateFormat(QString()),
-    m_customTimeFormat(QString()), m_newerArticlesRelativeTime(-1), m_selectedItem(nullptr),
-    m_unreadIconType(MessageUnreadIcon::Dot),
+    m_customTimeFormat(QString()), m_customFormatForDatesOnly(QString()), m_newerArticlesRelativeTime(-1),
+    m_selectedItem(nullptr), m_unreadIconType(MessageUnreadIcon::Dot),
     m_multilineListItems(qApp->settings()->value(GROUP(Messages), SETTING(Messages::MultilineArticleList)).toBool()) {
   updateFeedIconsDisplay();
   updateDateFormat();
@@ -141,26 +142,31 @@ MessagesModelCache* MessagesModel::cache() const {
   return m_cache;
 }
 
-void MessagesModel::repopulate() {
+void MessagesModel::repopulate(int additional_article_id) {
   m_cache->clear();
-  setQuery(selectStatement(), m_db);
+
+  QString statemnt = selectStatement(additional_article_id);
+
+  setQuery(statemnt, m_db);
 
   if (lastError().isValid()) {
-    qCriticalNN << LOGSEC_MESSAGEMODEL << "Error when setting new msg view query: '" << lastError().text() << "'.";
-    qCriticalNN << LOGSEC_MESSAGEMODEL << "Used SQL select statement: '" << selectStatement() << "'.";
+    qCriticalNN << LOGSEC_MESSAGEMODEL
+                << "Error when setting new msg view query:" << QUOTE_W_SPACE_DOT(lastError().text());
+    qCriticalNN << LOGSEC_MESSAGEMODEL << "Used SQL select statement:" << QUOTE_W_SPACE_DOT(statemnt);
   }
 
   while (canFetchMore()) {
     fetchMore();
   }
 
-  qDebugNN << LOGSEC_MESSAGEMODEL << "Repopulated model, SQL statement is now:\n"
-           << QUOTE_W_SPACE_DOT(selectStatement());
+  qDebugNN << LOGSEC_MESSAGEMODEL << "Repopulated model, SQL statement is now:\n" << QUOTE_W_SPACE_DOT(statemnt);
 }
 
-bool MessagesModel::setData(const QModelIndex& index, const QVariant& value, int role) {
+bool MessagesModel::setData(const QModelIndex& idx, const QVariant& value, int role) {
   Q_UNUSED(role)
-  m_cache->setData(index, value, record(index.row()));
+  m_cache->setData(idx, value);
+
+  emit dataChanged(index(idx.row(), 0), index(idx.row(), MSG_DB_LABELS_IDS));
   return true;
 }
 
@@ -256,6 +262,14 @@ void MessagesModel::updateDateFormat() {
     m_customTimeFormat = QString();
   }
 
+  if (qApp->settings()->value(GROUP(Messages), SETTING(Messages::UseCustomFormatForDatesOnly)).toBool()) {
+    m_customFormatForDatesOnly =
+      qApp->settings()->value(GROUP(Messages), SETTING(Messages::CustomFormatForDatesOnly)).toString();
+  }
+  else {
+    m_customFormatForDatesOnly = QString();
+  }
+
   m_newerArticlesRelativeTime =
     qApp->settings()->value(GROUP(Messages), SETTING(Messages::RelativeTimeForNewerArticles)).toInt();
 }
@@ -284,7 +298,7 @@ void MessagesModel::setupHeaderData() {
     /*: Tooltip for "pdeleted" column in msg list.*/ tr("Permanently deleted") <<
     /*: Tooltip for custom ID of feed of message.*/ tr("Feed ID") <<
     /*: Tooltip for title of message.*/ tr("Title") <<
-    /*: Tooltip for url of message.*/ tr("Url") <<
+    /*: Tooltip for url of message.*/ tr("URL") <<
     /*: Tooltip for author of message.*/ tr("Author") <<
     /*: Tooltip for creation date of message.*/ tr("Date") <<
     /*: Tooltip for contents of message.*/ tr("Contents") <<
@@ -294,6 +308,7 @@ void MessagesModel::setupHeaderData() {
     /*: Tooltip for custom ID of message.*/ tr("Custom ID") <<
     /*: Tooltip for custom hash string of message.*/ tr("Custom hash") <<
     /*: Tooltip for name of feed for message.*/ tr("Feed") <<
+    /*: Tooltip for indication whether article is RTL or not.*/ tr("RTL") <<
     /*: Tooltip for indication of presence of enclosures.*/ tr("Has enclosures") <<
     /*: Tooltip for indication of labels of message.*/ tr("Assigned labels") <<
     /*: Tooltip for indication of label IDs of message.*/ tr("Assigned label IDs");
@@ -305,8 +320,8 @@ void MessagesModel::setupHeaderData() {
                 << tr("Contents of the article.") << tr("List of attachments.") << tr("Score of the article.")
                 << tr("Account ID of the article.") << tr("Custom ID of the article.")
                 << tr("Custom hash of the article.") << tr("Name of feed of the article.")
-                << tr("Indication of enclosures presence within the article.") << tr("Labels assigned to the article.")
-                << tr("Label IDs assigned to the article.");
+                << tr("Layout direction of the article") << tr("Indication of enclosures presence within the article.")
+                << tr("Labels assigned to the article.") << tr("Label IDs assigned to the article.");
 }
 
 Qt::ItemFlags MessagesModel::flags(const QModelIndex& index) const {
@@ -337,11 +352,16 @@ QVariant MessagesModel::data(const QModelIndex& idx, int role) const {
       int index_column = idx.column();
 
       if (index_column == MSG_DB_DCREATED_INDEX) {
-        QDateTime dt = TextFactory::parseDateTime(QSqlQueryModel::data(idx, Qt::ItemDataRole::EditRole).value<qint64>())
-                         .toLocalTime();
+        QDateTime utc_dt =
+          TextFactory::parseDateTime(QSqlQueryModel::data(idx, Qt::ItemDataRole::EditRole).value<qint64>());
+        QDateTime dt = utc_dt.toLocalTime();
 
         if (dt.date() == QDate::currentDate() && !m_customTimeFormat.isEmpty()) {
           return dt.toString(m_customTimeFormat);
+        }
+        else if (!m_customFormatForDatesOnly.isEmpty() && utc_dt.time().hour() == 0 && utc_dt.time().minute() == 0 &&
+                 utc_dt.time().second() == 0) {
+          return dt.toString(m_customFormatForDatesOnly);
         }
         else if (m_newerArticlesRelativeTime > 0 &&
                  dt.daysTo(QDateTime::currentDateTime()) <= m_newerArticlesRelativeTime) {
@@ -406,6 +426,23 @@ QVariant MessagesModel::data(const QModelIndex& idx, int role) const {
       }
       else {
         return QVariant();
+      }
+    }
+
+    case TEXT_DIRECTION_ROLE: {
+      int index_column = idx.column();
+
+      if (index_column != MSG_DB_TITLE_INDEX && index_column != MSG_DB_FEED_TITLE_INDEX &&
+          index_column != MSG_DB_AUTHOR_INDEX) {
+        return Qt::LayoutDirection::LayoutDirectionAuto;
+      }
+      else {
+        return (m_cache->containsData(idx.row())
+                  ? m_cache->data(index(idx.row(), MSG_DB_FEED_IS_RTL_INDEX))
+                  : QSqlQueryModel::data(index(idx.row(), MSG_DB_FEED_IS_RTL_INDEX), Qt::ItemDataRole::EditRole))
+                     .toInt() == 0
+                 ? Qt::LayoutDirection::LayoutDirectionAuto
+                 : Qt::LayoutDirection::RightToLeft;
       }
     }
 
@@ -561,8 +598,8 @@ QVariant MessagesModel::data(const QModelIndex& idx, int role) const {
         return dta.toInt() == 1 ? m_favoriteIcon : QVariant();
       }
       else if (index_column == MSG_DB_HAS_ENCLOSURES) {
-        QModelIndex idx_important = index(idx.row(), MSG_DB_HAS_ENCLOSURES);
-        QVariant dta = QSqlQueryModel::data(idx_important);
+        QModelIndex idx_enc = index(idx.row(), MSG_DB_HAS_ENCLOSURES);
+        QVariant dta = QSqlQueryModel::data(idx_enc);
 
         return dta.toBool() ? m_enclosuresIcon : QVariant();
       }
@@ -591,9 +628,7 @@ bool MessagesModel::setMessageRead(int row_index, RootItem::ReadStatus read) {
 
   Message message = messageAt(row_index);
 
-  if (!m_selectedItem->getParentServiceRoot()->onBeforeSetMessagesRead(m_selectedItem,
-                                                                       QList<Message>() << message,
-                                                                       read)) {
+  if (!m_selectedItem->getParentServiceRoot()->onBeforeSetMessagesRead(m_selectedItem, {message}, read)) {
     // Cannot change read status of the item. Abort.
     return false;
   }
@@ -742,7 +777,7 @@ bool MessagesModel::setBatchMessagesDeleted(const QModelIndexList& messages) {
     msgs.append(msg);
     message_ids.append(QString::number(msg.m_id));
 
-    if (qobject_cast<RecycleBin*>(m_selectedItem) != nullptr) {
+    if (m_selectedItem->kind() == RootItem::Kind::Bin) {
       setData(index(message.row(), MSG_DB_PDELETED_INDEX), 1);
     }
     else {

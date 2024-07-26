@@ -31,12 +31,11 @@
 #ifndef GOOGLESUGGEST_H
 #define GOOGLESUGGEST_H
 
-#include <QObject>
+#include "network-web/downloader.h"
 
 #include <QListWidget>
 #include <QNetworkReply>
-
-#include "network-web/downloader.h"
+#include <QObject>
 
 class LocationLineEdit;
 class QTimer;
@@ -60,10 +59,10 @@ class GoogleSuggest : public QObject {
                            const QByteArray& contents);
 
   private:
-    LocationLineEdit* editor;
+    LocationLineEdit* m_editor;
     QScopedPointer<Downloader> m_downloader;
-    QScopedPointer<QListWidget> popup;
-    QTimer* timer;
+    QScopedPointer<QListWidget> m_popup;
+    QTimer* m_timer;
     QString m_enteredText;
 };
 

@@ -3,14 +3,13 @@
 #ifndef IOFACTORY_H
 #define IOFACTORY_H
 
-#include <QCoreApplication>
-
 #include "definitions/definitions.h"
 
+#include <QCoreApplication>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
 
-class IOFactory {
+class RSSGUARD_DLLSPEC IOFactory {
     Q_DECLARE_TR_FUNCTIONS(IOFactory)
 
   private:

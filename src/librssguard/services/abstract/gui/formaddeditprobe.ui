@@ -6,17 +6,13 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>270</width>
+    <width>350</width>
     <height>180</height>
    </rect>
   </property>
   <layout class="QFormLayout" name="formLayout">
    <item row="0" column="0">
-    <widget class="ColorToolButton" name="m_btnColor">
-     <property name="text">
-      <string>...</string>
-     </property>
-    </widget>
+    <widget class="ColorToolButton" name="m_btnColor"/>
    </item>
    <item row="0" column="1">
     <widget class="LineEditWithStatus" name="m_txtName" native="true"/>
@@ -24,7 +20,7 @@
    <item row="1" column="1">
     <widget class="LineEditWithStatus" name="m_txtFilter" native="true"/>
    </item>
-   <item row="2" column="0" colspan="2">
+   <item row="3" column="0" colspan="2">
     <spacer name="verticalSpacer">
      <property name="orientation">
       <enum>Qt::Vertical</enum>
@@ -37,7 +33,7 @@
      </property>
     </spacer>
    </item>
-   <item row="3" column="0" colspan="2">
+   <item row="4" column="0" colspan="2">
     <widget class="QDialogButtonBox" name="m_buttonBox">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
@@ -47,9 +43,17 @@
      </property>
     </widget>
    </item>
+   <item row="2" column="0" colspan="2">
+    <widget class="HelpSpoiler" name="m_help" native="true"/>
+   </item>
   </layout>
  </widget>
  <customwidgets>
+  <customwidget>
+   <class>ColorToolButton</class>
+   <extends>QToolButton</extends>
+   <header>colortoolbutton.h</header>
+  </customwidget>
   <customwidget>
    <class>LineEditWithStatus</class>
    <extends>QWidget</extends>
@@ -57,9 +61,10 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>ColorToolButton</class>
-   <extends>QToolButton</extends>
-   <header>colortoolbutton.h</header>
+   <class>HelpSpoiler</class>
+   <extends>QWidget</extends>
+   <header>helpspoiler.h</header>
+   <container>1</container>
   </customwidget>
  </customwidgets>
  <tabstops>

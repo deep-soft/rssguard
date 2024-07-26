@@ -5,8 +5,8 @@
 
 #include <QToolButton>
 
-class PlainToolButton : public QToolButton {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC PlainToolButton : public QToolButton {
+    Q_OBJECT
 
   public:
     explicit PlainToolButton(QWidget* parent = nullptr);

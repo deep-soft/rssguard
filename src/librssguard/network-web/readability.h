@@ -3,28 +3,27 @@
 #ifndef READABILITY_H
 #define READABILITY_H
 
-#include <QObject>
-
 #include "miscellaneous/nodejs.h"
 
+#include <QObject>
 #include <QProcess>
 
 class Readability : public QObject {
-  Q_OBJECT
+    Q_OBJECT
 
   public:
     explicit Readability(QObject* parent = nullptr);
 
-    void makeHtmlReadable(const QString& html, const QString& base_url = {});
+    void makeHtmlReadable(QObject* sndr, const QString& html, const QString& base_url = {});
 
   private slots:
-    void onReadabilityFinished(int exit_code, QProcess::ExitStatus exit_status);
-    void onPackageReady(const QList<NodeJs::PackageMetadata>& pkgs, bool already_up_to_date);
-    void onPackageError(const QList<NodeJs::PackageMetadata>& pkgs, const QString& error);
+    void onReadabilityFinished(QObject* sndr, int exit_code, QProcess::ExitStatus exit_status);
+    void onPackageReady(const QObject* sndr, const QList<NodeJs::PackageMetadata>& pkgs, bool already_up_to_date);
+    void onPackageError(const QObject* sndr, const QList<NodeJs::PackageMetadata>& pkgs, const QString& error);
 
   signals:
-    void htmlReadabled(const QString& better_html);
-    void errorOnHtmlReadabiliting(const QString& error);
+    void htmlReadabled(const QObject* sndr, const QString& better_html);
+    void errorOnHtmlReadabiliting(const QObject* sndr, const QString& error);
 
   private:
     bool m_modulesInstalling;

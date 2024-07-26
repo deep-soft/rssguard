@@ -3,9 +3,9 @@
 #ifndef FORMADDEDITLABEL_H
 #define FORMADDEDITLABEL_H
 
-#include <QDialog>
-
 #include "ui_formaddeditlabel.h"
+
+#include <QDialog>
 
 namespace Ui {
   class FormAddEditLabel;
@@ -13,8 +13,8 @@ namespace Ui {
 
 class Label;
 
-class FormAddEditLabel : public QDialog {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC FormAddEditLabel : public QDialog {
+    Q_OBJECT
 
   public:
     explicit FormAddEditLabel(QWidget* parent = nullptr);

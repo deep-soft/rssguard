@@ -3,9 +3,9 @@
 #ifndef MESSAGEOBJECT_H
 #define MESSAGEOBJECT_H
 
-#include <QObject>
-
 #include "services/abstract/label.h"
+
+#include <QObject>
 
 class MessageObject : public QObject {
     Q_OBJECT
@@ -162,13 +162,5 @@ class MessageObject : public QObject {
     QList<Label*> m_availableLabels;
     bool m_runningAfterFetching;
 };
-
-inline MessageObject::DuplicateCheck operator|(MessageObject::DuplicateCheck lhs, MessageObject::DuplicateCheck rhs) {
-  return static_cast<MessageObject::DuplicateCheck>(int(lhs) | int(rhs));
-}
-
-inline MessageObject::DuplicateCheck operator&(MessageObject::DuplicateCheck lhs, MessageObject::DuplicateCheck rhs) {
-  return static_cast<MessageObject::DuplicateCheck>(int(lhs) & int(rhs));
-}
 
 #endif // MESSAGEOBJECT_H

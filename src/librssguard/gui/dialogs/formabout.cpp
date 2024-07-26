@@ -2,29 +2,36 @@
 
 #include "gui/dialogs/formabout.h"
 
-#include "database/databasedriver.h"
-#include "database/databasefactory.h"
 #include "definitions/definitions.h"
-#include "exceptions/applicationexception.h"
 #include "gui/guiutilities.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
+#include "miscellaneous/settings.h"
 #include "miscellaneous/settingsproperties.h"
 #include "miscellaneous/textfactory.h"
 #include "network-web/webfactory.h"
 
+#include <QClipboard>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QPlainTextEdit>
 #include <QTextStream>
 
+#if defined(NO_LITE)
+#include <QWebEngineProfile>
+#endif
+
 FormAbout::FormAbout(bool go_to_changelog, QWidget* parent) : QDialog(parent) {
   m_ui.setupUi(this);
   m_ui.m_lblIcon->setPixmap(QPixmap(APP_ICON_PATH));
+  m_ui.m_btnCopyInfo->setIcon(qApp->icons()->fromTheme(QSL("edit-copy")));
   GuiUtilities::applyDialogProperties(*this,
                                       qApp->icons()->fromTheme(QSL("help-about")),
                                       tr("About %1").arg(QSL(APP_NAME)));
+
+  connect(m_ui.m_btnCopyInfo, &QPushButton::clicked, this, &FormAbout::copyInfoToClipboard);
+
   loadLicenseAndInformation();
   loadSettingsAndPaths();
 
@@ -34,6 +41,21 @@ FormAbout::FormAbout(bool go_to_changelog, QWidget* parent) : QDialog(parent) {
 }
 
 FormAbout::~FormAbout() {}
+
+void FormAbout::copyInfoToClipboard() {
+  auto* clip = QGuiApplication::clipboard();
+
+  if (clip != nullptr) {
+    clip->setText(m_ui.m_lblDesc->text());
+  }
+  else {
+    qApp->showGuiMessage(Notification::Event::GeneralEvent,
+                         GuiMessage(tr("Cannot copy"),
+                                    tr("Cannot copy info to clipboard."),
+                                    QSystemTrayIcon::MessageIcon::Critical),
+                         GuiMessageDestination(true, true));
+  }
+}
 
 void FormAbout::displayLicense() {
   m_ui.m_tbLicenses->setPlainText(m_ui.m_cbLicenses->currentData().toString());
@@ -54,12 +76,12 @@ void FormAbout::loadSettingsAndPaths() {
 
   const QString user_data_path = QDir::toNativeSeparators(qApp->userDataFolder());
 
-  m_ui.m_tbResources->setPlainText(QSL("User data folder (\"%5\") -> \"%1\"\n\n"
-                                       "Settings file (%3) -> \"%2\"\n"
-                                       "Skins base folder -> \"%4\"\n"
-                                       "Icon themes base folder -> \"%8\"\n"
-                                       "Node.js package folder -> \"%6\"\n"
-                                       "QtWebEngine cache folder -> \"%7\"")
+  m_ui.m_tbResources->setPlainText(tr("User data folder (\"%5\") -> \"%1\"\n\n"
+                                      "Settings file (%3) -> \"%2\"\n"
+                                      "Skins base folder -> \"%4\"\n"
+                                      "Icon themes base folder -> \"%8\"\n"
+                                      "Node.js package folder -> \"%6\"\n"
+                                      "QtWebEngine cache folder -> \"%7\"")
                                      .arg(user_data_path,
                                           QDir::toNativeSeparators(qApp->settings()->fileName())
                                             .replace(user_data_path, QSL(USER_DATA_PLACEHOLDER)),
@@ -69,7 +91,7 @@ void FormAbout::loadSettingsAndPaths() {
                                           QSL(USER_DATA_PLACEHOLDER),
                                           QDir::toNativeSeparators(qApp->nodejs()->packageFolder())
                                             .replace(user_data_path, QSL(USER_DATA_PLACEHOLDER)),
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
                                           QDir::toNativeSeparators(qApp->web()->engineProfile()->cachePath())
                                             .replace(user_data_path, QSL(USER_DATA_PLACEHOLDER)),
 #else
@@ -87,8 +109,9 @@ void FormAbout::loadLicenseAndInformation() {
   for (const QJsonValue& license : licenses_index.array()) {
     const QJsonObject license_obj = license.toObject();
     const QString license_text =
-      QString::fromUtf8(IOFactory::readFile(APP_INFO_PATH + QSL("/") + license_obj["file"].toString()));
-    const QString license_title = license_obj["title"].toString() + QSL(": ") + license_obj["components"].toString();
+      QString::fromUtf8(IOFactory::readFile(APP_INFO_PATH + QSL("/") + license_obj[QSL("file")].toString()));
+    const QString license_title =
+      license_obj[QSL("title")].toString() + QSL(": ") + license_obj[QSL("components")].toString();
 
     m_ui.m_cbLicenses->addItem(license_title, license_text);
   }
@@ -107,11 +130,13 @@ void FormAbout::loadLicenseAndInformation() {
   }
 
   // Set other informative texts.
-  m_ui.m_lblDesc->setText(tr("<b>%8</b><br>"
-                             "<b>Version:</b> %1 (built on %2/%3)<br>"
-                             "<b>Revision:</b> %4<br>"
-                             "<b>Build date:</b> %5<br>"
-                             "<b>Qt:</b> %6 (compiled against %7)<br>")
+  m_ui.m_lblDesc->setTextFormat(Qt::TextFormat::RichText);
+  m_ui.m_lblDesc->setText(tr("<h4>%8</h4>"
+                             "<b>Version:</b> %1 (built on %2/%3)<br/>"
+                             "<b>Revision:</b> %4<br/>"
+                             "<b>Build date:</b> %5<br/>"
+                             "<b>OS:</b> %9<br/>"
+                             "<b>Qt:</b> %6 (compiled against %7)")
                             .arg(qApp->applicationVersion(),
                                  QSL(APP_SYSTEM_NAME),
                                  QSL(APP_SYSTEM_VERSION),
@@ -122,7 +147,8 @@ void FormAbout::loadLicenseAndInformation() {
                                              QLocale::FormatType::ShortFormat),
                                  qVersion(),
                                  QSL(QT_VERSION_STR),
-                                 QSL(APP_NAME)));
+                                 QSL(APP_NAME),
+                                 QSysInfo::prettyProductName()));
   m_ui.m_txtInfo->setText(tr("<body>%5 is a (very) tiny feed reader."
                              "<br><br>This software is distributed under the terms of GNU General "
                              "Public License, version 3."

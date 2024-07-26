@@ -2,8 +2,8 @@
 
 #include "gui/dialogs/formmain.h"
 
-#include "database/databasefactory.h"
 #include "definitions/definitions.h"
+#include "definitions/globals.h"
 #include "gui/dialogs/formabout.h"
 #include "gui/dialogs/formaddaccount.h"
 #include "gui/dialogs/formbackupdatabasesettings.h"
@@ -13,10 +13,9 @@
 #include "gui/dialogs/formupdate.h"
 #include "gui/feedmessageviewer.h"
 #include "gui/feedsview.h"
-#include "gui/messagebox.h"
+#include "gui/guiutilities.h"
 #include "gui/messagepreviewer.h"
 #include "gui/messagesview.h"
-#include "gui/reusable/plaintoolbutton.h"
 #include "gui/reusable/searchlineedit.h"
 #include "gui/systemtrayicon.h"
 #include "gui/tabbar.h"
@@ -28,15 +27,13 @@
 #include "miscellaneous/iconfactory.h"
 #include "miscellaneous/mutex.h"
 #include "miscellaneous/settings.h"
-#include "miscellaneous/systemfactory.h"
 #include "network-web/adblock/adblockicon.h"
 #include "network-web/adblock/adblockmanager.h"
 #include "network-web/webfactory.h"
 #include "services/abstract/recyclebin.h"
 #include "services/abstract/serviceroot.h"
-#include "services/owncloud/owncloudnetworkfactory.h"
-#include "services/standard/gui/formstandardimportexport.h"
 
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QRect>
@@ -51,6 +48,8 @@
 #else
 #include <QDesktopWidget>
 #endif
+
+#include <QWindow>
 
 FormMain::FormMain(QWidget* parent, Qt::WindowFlags f)
   : QMainWindow(parent, f), m_ui(new Ui::FormMain), m_trayMenu(nullptr), m_statusBar(nullptr) {
@@ -93,7 +92,7 @@ FormMain::FormMain(QWidget* parent, Qt::WindowFlags f)
 
   m_ui->m_menuWebBrowserTabs->addAction(qApp->web()->adBlock()->adBlockIcon());
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
   m_ui->m_menuWebBrowserTabs->addAction(qApp->web()->engineSettingsAction());
 #endif
 
@@ -147,6 +146,7 @@ void FormMain::showDbCleanupAssistant() {
     // Reload needed stuff.
     qApp->feedUpdateLock()->unlock();
     tabWidget()->feedMessageViewer()->messagesView()->reloadSelections();
+    qApp->feedReader()->feedsModel()->informAboutDatabaseCleanup();
     qApp->feedReader()->feedsModel()->reloadCountsOfWholeModel();
   }
   else {
@@ -187,6 +187,7 @@ QList<QAction*> FormMain::allActions() const {
   actions << m_ui->m_actionSendMessageViaEmail;
   actions << m_ui->m_actionOpenSelectedSourceArticlesExternally;
   actions << m_ui->m_actionOpenSelectedMessagesInternally;
+  actions << m_ui->m_actionPlaySelectedArticlesInMediaPlayer;
   actions << m_ui->m_actionOpenSelectedMessagesInternallyNoTab;
   actions << m_ui->m_actionAlternateColorsInLists;
   actions << m_ui->m_actionMessagePreviewEnabled;
@@ -208,6 +209,8 @@ QList<QAction*> FormMain::allActions() const {
   actions << m_ui->m_actionUpdateSelectedItemsWithCustomTimers;
   actions << m_ui->m_actionStopRunningItemsUpdate;
   actions << m_ui->m_actionEditSelectedItem;
+  actions << m_ui->m_actionEditChildFeeds;
+  actions << m_ui->m_actionEditChildFeedsRecursive;
   actions << m_ui->m_actionCopyUrlSelectedFeed;
   actions << m_ui->m_actionCopyUrlSelectedArticles;
   actions << m_ui->m_actionFocusSearchFeeds;
@@ -223,7 +226,6 @@ QList<QAction*> FormMain::allActions() const {
   actions << m_ui->m_actionFeedMoveTop;
   actions << m_ui->m_actionFeedMoveBottom;
   actions << m_ui->m_actionAddCategoryIntoSelectedItem;
-  actions << m_ui->m_actionViewSelectedItemsNewspaperMode;
   actions << m_ui->m_actionSelectNextItem;
   actions << m_ui->m_actionSelectPreviousItem;
   actions << m_ui->m_actionSelectNextMessage;
@@ -232,6 +234,8 @@ QList<QAction*> FormMain::allActions() const {
   actions << m_ui->m_actionExpandCollapseItem;
   actions << m_ui->m_actionExpandCollapseItemRecursively;
   actions << m_ui->m_actionMessageFilters;
+  actions << m_ui->m_actionEmptyAllRecycleBins;
+  actions << m_ui->m_actionRestoreAllRecycleBins;
   actions << m_ui->m_actionTabNewWebBrowser;
   actions << m_ui->m_actionTabsCloseCurrent;
   actions << m_ui->m_actionTabsCloseAll;
@@ -303,7 +307,7 @@ void FormMain::updateAddItemMenu() {
 
   auto srts = qApp->feedReader()->feedsModel()->serviceRoots();
 
-  for (ServiceRoot* activated_root : qAsConst(srts)) {
+  for (ServiceRoot* activated_root : std::as_const(srts)) {
     QMenu* root_menu = new QMenu(activated_root->title(), m_ui->m_menuAddItem);
 
     root_menu->setIcon(activated_root->icon());
@@ -326,7 +330,7 @@ void FormMain::updateAddItemMenu() {
 
       root_menu->addAction(action_new_feed);
       connect(action_new_feed, &QAction::triggered, activated_root, [activated_root]() {
-        activated_root->addNewFeed(activated_root);
+        activated_root->addNewFeed(activated_root, QGuiApplication::clipboard()->text(QClipboard::Mode::Clipboard));
       });
     }
 
@@ -347,7 +351,7 @@ void FormMain::updateAddItemMenu() {
     m_ui->m_menuAddItem->addAction(m_ui->m_actionAddFeedIntoSelectedItem);
   }
   else {
-    m_ui->m_menuAddItem->addAction(m_ui->m_actionNoActions);
+    m_ui->m_menuAddItem->addAction(m_ui->m_actionNoAccounts);
   }
 }
 
@@ -356,7 +360,7 @@ void FormMain::updateRecycleBinMenu() {
 
   auto srts = qApp->feedReader()->feedsModel()->serviceRoots();
 
-  for (const ServiceRoot* activated_root : qAsConst(srts)) {
+  for (const ServiceRoot* activated_root : std::as_const(srts)) {
     QMenu* root_menu = new QMenu(activated_root->title(), m_ui->m_menuRecycleBin);
 
     root_menu->setIcon(activated_root->icon());
@@ -463,7 +467,16 @@ void FormMain::updateMessageButtonsAvailability() {
   m_ui->m_actionMarkSelectedMessagesAsRead->setEnabled(atleast_one_message_selected);
   m_ui->m_actionMarkSelectedMessagesAsUnread->setEnabled(atleast_one_message_selected);
   m_ui->m_actionOpenSelectedMessagesInternallyNoTab->setEnabled(one_message_selected);
-  m_ui->m_actionOpenSelectedMessagesInternally->setEnabled(atleast_one_message_selected);
+
+#if !defined(ENABLE_MEDIAPLAYER)
+  m_ui->m_actionPlaySelectedArticlesInMediaPlayer->setText(tr("Play in media player") + QSL(" ") +
+                                                           tr("(not supported)"));
+  m_ui->m_actionPlaySelectedArticlesInMediaPlayer->setEnabled(false);
+#else
+  m_ui->m_actionPlaySelectedArticlesInMediaPlayer->setEnabled(one_message_selected);
+#endif
+
+  m_ui->m_actionOpenSelectedMessagesInternally->setEnabled(one_message_selected);
   m_ui->m_actionOpenSelectedSourceArticlesExternally->setEnabled(atleast_one_message_selected);
   m_ui->m_actionCopyUrlSelectedArticles->setEnabled(atleast_one_message_selected);
   m_ui->m_actionSendMessageViaEmail->setEnabled(one_message_selected);
@@ -488,6 +501,9 @@ void FormMain::updateFeedButtonsAvailability() {
   m_ui->m_actionClearSelectedItems->setEnabled(anything_selected);
   m_ui->m_actionDeleteSelectedItem->setEnabled(!critical_action_running && anything_selected);
   m_ui->m_actionEditSelectedItem->setEnabled(!critical_action_running && anything_selected);
+  m_ui->m_actionEditChildFeeds->setEnabled(!critical_action_running && (service_selected || category_selected));
+  m_ui->m_actionEditChildFeedsRecursive->setEnabled(!critical_action_running &&
+                                                    (service_selected || category_selected));
   m_ui->m_actionCopyUrlSelectedFeed->setEnabled(service_selected || feed_selected || category_selected);
   m_ui->m_actionMarkSelectedItemsAsRead->setEnabled(anything_selected);
   m_ui->m_actionMarkSelectedItemsAsUnread->setEnabled(anything_selected);
@@ -495,7 +511,6 @@ void FormMain::updateFeedButtonsAvailability() {
   m_ui->m_actionUpdateSelectedItemsWithCustomTimers->setEnabled(!critical_action_running);
   m_ui->m_actionUpdateSelectedItems->setEnabled(!critical_action_running &&
                                                 (feed_selected || category_selected || service_selected));
-  m_ui->m_actionViewSelectedItemsNewspaperMode->setEnabled(anything_selected);
   m_ui->m_actionExpandCollapseItem->setEnabled(category_selected || service_selected);
   m_ui->m_actionExpandCollapseItemRecursively->setEnabled(category_selected || service_selected);
   m_ui->m_actionServiceDelete->setEnabled(service_selected);
@@ -524,7 +539,7 @@ void FormMain::switchVisibility(bool force_hide) {
                               QSystemTrayIcon::MessageIcon::Warning});
       }
       else {
-        close();
+        hide();
       }
     }
     else {
@@ -547,7 +562,7 @@ void FormMain::display() {
   activateWindow();
 
   // Raise alert event. Check the documentation for more info on this.
-  Application::alert(this);
+  QApplication::alert(this);
 }
 
 void FormMain::setupIcons() {
@@ -592,6 +607,8 @@ void FormMain::setupIcons() {
   m_ui->m_actionDeleteSelectedItem->setIcon(icon_theme_factory->fromTheme(QSL("list-remove")));
   m_ui->m_actionDeleteSelectedMessages->setIcon(icon_theme_factory->fromTheme(QSL("mail-mark-junk")));
   m_ui->m_actionEditSelectedItem->setIcon(icon_theme_factory->fromTheme(QSL("document-edit")));
+  m_ui->m_actionEditChildFeeds->setIcon(icon_theme_factory->fromTheme(QSL("document-edit")));
+  m_ui->m_actionEditChildFeedsRecursive->setIcon(icon_theme_factory->fromTheme(QSL("document-edit")));
   m_ui->m_actionCopyUrlSelectedFeed->setIcon(icon_theme_factory->fromTheme(QSL("edit-copy")));
   m_ui->m_actionCopyUrlSelectedArticles->setIcon(icon_theme_factory->fromTheme(QSL("edit-copy")));
   m_ui->m_actionMarkAllItemsRead->setIcon(icon_theme_factory->fromTheme(QSL("mail-mark-read")));
@@ -602,9 +619,10 @@ void FormMain::setupIcons() {
   m_ui->m_actionSwitchImportanceOfSelectedMessages->setIcon(icon_theme_factory->fromTheme(QSL("mail-mark-important")));
   m_ui->m_actionOpenSelectedSourceArticlesExternally->setIcon(icon_theme_factory->fromTheme(QSL("document-open")));
   m_ui->m_actionOpenSelectedMessagesInternally->setIcon(icon_theme_factory->fromTheme(QSL("document-open")));
+  m_ui->m_actionPlaySelectedArticlesInMediaPlayer->setIcon(icon_theme_factory->fromTheme(QSL("player_play"),
+                                                                                         QSL("media-playback-start")));
   m_ui->m_actionOpenSelectedMessagesInternallyNoTab->setIcon(icon_theme_factory->fromTheme(QSL("document-open")));
   m_ui->m_actionSendMessageViaEmail->setIcon(icon_theme_factory->fromTheme(QSL("mail-send")));
-  m_ui->m_actionViewSelectedItemsNewspaperMode->setIcon(icon_theme_factory->fromTheme(QSL("format-justify-fill")));
   m_ui->m_actionSelectNextItem->setIcon(icon_theme_factory->fromTheme(QSL("arrow-down")));
   m_ui->m_actionSelectPreviousItem->setIcon(icon_theme_factory->fromTheme(QSL("arrow-up")));
   m_ui->m_actionSelectNextMessage->setIcon(icon_theme_factory->fromTheme(QSL("arrow-down")));
@@ -664,11 +682,13 @@ void FormMain::loadSize() {
   resize(settings->value(GROUP(GUI), GUI::MainWindowInitialSize, size()).toSize());
   move(settings->value(GROUP(GUI), GUI::MainWindowInitialPosition, screen.center() - rect().center()).toPoint());
 
+  GuiUtilities::fixTooBigDialog(*this, false);
+
   if (settings->value(GROUP(GUI), SETTING(GUI::MainWindowStartsMaximized)).toBool()) {
     setWindowState(windowState() | Qt::WindowState::WindowMaximized);
 
     // We process events so that window is really maximized fast.
-    qApp->processEvents();
+    QCoreApplication::processEvents();
   }
 
   m_ui->m_actionMessagePreviewEnabled
@@ -760,7 +780,7 @@ void FormMain::createConnections() {
   connect(m_ui->m_actionDownloadManager, &QAction::triggered, m_ui->m_tabWidget, &TabWidget::showDownloadManager);
   connect(m_ui->m_actionCleanupDatabase, &QAction::triggered, this, &FormMain::showDbCleanupAssistant);
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
   connect(m_ui->m_actionCleanupWebCache, &QAction::triggered, qApp->web(), &WebFactory::cleanupCache);
 #else
   m_ui->m_menuTools->removeAction(m_ui->m_actionCleanupWebCache);
@@ -851,6 +871,14 @@ void FormMain::createConnections() {
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->messagesView(),
           &MessagesView::openSelectedSourceMessagesExternally);
+
+#if defined(ENABLE_MEDIAPLAYER)
+  connect(m_ui->m_actionPlaySelectedArticlesInMediaPlayer,
+          &QAction::triggered,
+          tabWidget()->feedMessageViewer()->messagesView(),
+          &MessagesView::playSelectedArticleInMediaPlayer);
+#endif
+
   connect(m_ui->m_actionOpenSelectedMessagesInternally,
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->messagesView(),
@@ -892,11 +920,11 @@ void FormMain::createConnections() {
   connect(m_ui->m_actionClearSelectedItems,
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->feedsView(),
-          &FeedsView::clearSelectedFeeds);
+          &FeedsView::clearSelectedItems);
   connect(m_ui->m_actionClearAllItems,
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->feedsView(),
-          &FeedsView::clearAllFeeds);
+          &FeedsView::clearAllItems);
   connect(m_ui->m_actionUpdateSelectedItems,
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->feedsView(),
@@ -930,11 +958,15 @@ void FormMain::createConnections() {
   connect(m_ui->m_actionEditSelectedItem,
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->feedsView(),
-          &FeedsView::editSelectedItem);
-  connect(m_ui->m_actionViewSelectedItemsNewspaperMode,
+          &FeedsView::editSelectedItems);
+  connect(m_ui->m_actionEditChildFeeds,
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->feedsView(),
-          &FeedsView::openSelectedItemsInNewspaperMode);
+          &FeedsView::editChildFeeds);
+  connect(m_ui->m_actionEditChildFeedsRecursive,
+          &QAction::triggered,
+          tabWidget()->feedMessageViewer()->feedsView(),
+          &FeedsView::editRecursiveFeeds);
   connect(m_ui->m_actionDeleteSelectedItem,
           &QAction::triggered,
           tabWidget()->feedMessageViewer()->feedsView(),
@@ -1048,8 +1080,8 @@ void FormMain::restoreDatabaseSettings() {
 void FormMain::changeEvent(QEvent* event) {
   switch (event->type()) {
     case QEvent::Type::WindowStateChange: {
-      if ((windowState() & Qt::WindowState::WindowMinimized) == Qt::WindowState::WindowMinimized &&
-          SystemTrayIcon::isSystemTrayDesired() && SystemTrayIcon::isSystemTrayAreaAvailable() &&
+      if (Globals::hasFlag(windowState(), Qt::WindowState::WindowMinimized) && SystemTrayIcon::isSystemTrayDesired() &&
+          SystemTrayIcon::isSystemTrayAreaAvailable() &&
           qApp->settings()->value(GROUP(GUI), SETTING(GUI::HideMainWindowWhenMinimized)).toBool()) {
         event->ignore();
 
@@ -1069,15 +1101,27 @@ void FormMain::changeEvent(QEvent* event) {
 }
 
 void FormMain::closeEvent(QCloseEvent* event) {
-  QMainWindow::closeEvent(event);
+  if (qApp->quitOnLastWindowClosed()) {
+    QMainWindow::closeEvent(event);
+  }
+  else /*if (!event->spontaneous())*/ {
+    event->ignore();
+    hide();
+  }
 
-  qDebugNN << LOGSEC_GUI << "Main window's close event";
+  qDebugNN << LOGSEC_GUI << "Main window close event";
+}
+
+void FormMain::showEvent(QShowEvent* event) {
+  QMainWindow::showEvent(event);
+
+  tabWidget()->feedMessageViewer()->normalizeToolbarHeights();
 }
 
 void FormMain::hideEvent(QHideEvent* event) {
   QMainWindow::hideEvent(event);
 
-  qDebugNN << LOGSEC_GUI << "Main window's hide event";
+  qDebugNN << LOGSEC_GUI << "Main window hide event";
 }
 
 void FormMain::showDocs() {

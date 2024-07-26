@@ -3,7 +3,7 @@
 #ifndef MESSAGE_H
 #define MESSAGE_H
 
-//#include "definitions/definitions.h"
+// #include "definitions/definitions.h"
 
 #include <QDataStream>
 #include <QDateTime>
@@ -26,6 +26,7 @@ struct RSSGUARD_DLLSPEC Enclosure {
 class RSSGUARD_DLLSPEC Enclosures {
   public:
     static QList<Enclosure> decodeEnclosuresFromString(const QString& enclosures_data);
+    static QJsonArray encodeEnclosuresToJson(const QList<Enclosure>& enclosures);
     static QString encodeEnclosuresToString(const QList<Enclosure>& enclosures);
 };
 
@@ -56,6 +57,8 @@ class RSSGUARD_DLLSPEC Message {
 
     void sanitize(const Feed* feed, bool fix_future_datetimes);
 
+    QJsonObject toJson() const;
+
     // Creates Message from given record, which contains
     // row from query SELECT * FROM Messages WHERE ....;
     static Message fromSqlRecord(const QSqlRecord& record, bool* result = nullptr);
@@ -72,6 +75,7 @@ class RSSGUARD_DLLSPEC Message {
     // to localtime when needed.
     QDateTime m_created;
     QString m_feedId;
+    QString m_feedTitle;
     int m_accountId;
     int m_id;
     QString m_customId;
@@ -80,6 +84,7 @@ class RSSGUARD_DLLSPEC Message {
     bool m_isImportant;
     bool m_isDeleted;
     double m_score;
+    bool m_isRtl;
     QList<Enclosure> m_enclosures;
 
     // List of assigned labels.

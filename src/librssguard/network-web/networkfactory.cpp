@@ -3,9 +3,7 @@
 #include "network-web/networkfactory.h"
 
 #include "definitions/definitions.h"
-#include "miscellaneous/settings.h"
 #include "network-web/downloader.h"
-#include "network-web/silentnetworkaccessmanager.h"
 
 #include <QEventLoop>
 #include <QIcon>
@@ -159,10 +157,13 @@ QString NetworkFactory::networkErrorText(QNetworkReply::NetworkError error_code)
 }
 
 QString NetworkFactory::sanitizeUrl(const QString& url) {
-  return QString(url).replace(QRegularExpression(QSL("[^\\w\\-.~:\\/?#\\[\\]@!$&'()*+,;=% \\|]")), {});
+  static QRegularExpression reg_non_url(QSL("[^\\w\\-.~:\\/?#\\[\\]@!$&'()*+,;=% \\|]"),
+                                        QRegularExpression::PatternOption::UseUnicodePropertiesOption);
+
+  return QString(url).replace(reg_non_url, {});
 }
 
-QNetworkReply::NetworkError NetworkFactory::downloadIcon(const QList<QPair<QString, bool>>& urls,
+QNetworkReply::NetworkError NetworkFactory::downloadIcon(const QList<IconLocation>& urls,
                                                          int timeout,
                                                          QPixmap& output,
                                                          const QList<QPair<QByteArray, QByteArray>>& additional_headers,
@@ -170,15 +171,15 @@ QNetworkReply::NetworkError NetworkFactory::downloadIcon(const QList<QPair<QStri
   QNetworkReply::NetworkError network_result = QNetworkReply::NetworkError::UnknownNetworkError;
 
   for (const auto& url : urls) {
-    if (url.first.isEmpty()) {
+    if (url.m_url.isEmpty()) {
       continue;
     }
 
     QByteArray icon_data;
 
-    if (url.second) {
+    if (url.m_isDirect) {
       // Download directly.
-      network_result = performNetworkOperation(url.first,
+      network_result = performNetworkOperation(url.m_url,
                                                timeout,
                                                {},
                                                icon_data,
@@ -208,7 +209,7 @@ QNetworkReply::NetworkError NetworkFactory::downloadIcon(const QList<QPair<QStri
     }
     else {
       // Duck Duck Go.
-      QUrl url_full = QUrl(url.first);
+      QUrl url_full = QUrl(url.m_url);
       QString host = url_full.host();
 
       if (host.startsWith(QSL("www."))) {
@@ -294,7 +295,7 @@ NetworkResult NetworkFactory::performNetworkOperation(const QString& url,
   output = downloader.lastOutputData();
 
   result.m_networkError = downloader.lastOutputError();
-  result.m_contentType = downloader.lastContentType().toString();
+  result.m_contentType = downloader.lastContentType();
   result.m_cookies = downloader.lastCookies();
   result.m_httpCode = downloader.lastHttpStatusCode();
   result.m_headers = downloader.lastHeaders();
@@ -335,7 +336,7 @@ NetworkResult NetworkFactory::performNetworkOperation(const QString& url,
   output = downloader.lastOutputMultipartData();
 
   result.m_networkError = downloader.lastOutputError();
-  result.m_contentType = downloader.lastContentType().toString();
+  result.m_contentType = downloader.lastContentType();
   result.m_cookies = downloader.lastCookies();
   result.m_httpCode = downloader.lastHttpStatusCode();
   result.m_headers = downloader.lastHeaders();

@@ -12,16 +12,11 @@
 #include "gui/dialogs/formmessagefiltersmanager.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/mutex.h"
+#include "miscellaneous/pluginfactory.h"
+#include "miscellaneous/settings.h"
 #include "services/abstract/cacheforserviceroot.h"
+#include "services/abstract/serviceentrypoint.h"
 #include "services/abstract/serviceroot.h"
-#include "services/feedly/feedlyentrypoint.h"
-#include "services/gmail/gmailentrypoint.h"
-#include "services/greader/greaderentrypoint.h"
-#include "services/newsblur/newsblurentrypoint.h"
-#include "services/owncloud/owncloudserviceentrypoint.h"
-#include "services/reddit/redditentrypoint.h"
-#include "services/standard/standardserviceentrypoint.h"
-#include "services/tt-rss/ttrssserviceentrypoint.h"
 
 #include <QThread>
 #include <QTimer>
@@ -52,25 +47,27 @@ FeedReader::FeedReader(QObject* parent)
 
 FeedReader::~FeedReader() {
   qDebugNN << LOGSEC_CORE << "Destroying FeedReader instance.";
-  qDeleteAll(m_feedServices);
+
+  for (ServiceEntryPoint* service : m_feedServices) {
+    if (!service->isDynamicallyLoaded()) {
+      qDebugNN << LOGSEC_CORE << "Deleting service" << QUOTE_W_SPACE_DOT(service->code());
+      delete service;
+    }
+    else {
+      qDebugNN << LOGSEC_CORE << "Service" << QUOTE_W_SPACE(service->code()) << "will be deleted by runtime.";
+    }
+  }
+  // qDeleteAll(m_feedServices);
+
   qDeleteAll(m_messageFilters);
 }
 
 QList<ServiceEntryPoint*> FeedReader::feedServices() {
   if (m_feedServices.isEmpty()) {
-    // NOTE: All installed services create their entry points here.
-    m_feedServices.append(new FeedlyEntryPoint());
-    m_feedServices.append(new GmailEntryPoint());
-    m_feedServices.append(new GreaderEntryPoint());
-    m_feedServices.append(new OwnCloudServiceEntryPoint());
+    PluginFactory plugin_loader;
 
-#if !defined(NDEBUG)
-    m_feedServices.append(new NewsBlurEntryPoint());
-    m_feedServices.append(new RedditEntryPoint());
-#endif
-
-    m_feedServices.append(new StandardServiceEntryPoint());
-    m_feedServices.append(new TtRssServiceEntryPoint());
+    // Add dynamically loaded plugins.
+    m_feedServices.append(plugin_loader.loadPlugins());
   }
 
   return m_feedServices;
@@ -146,6 +143,7 @@ void FeedReader::showMessageFiltersManager() {
 
   manager.exec();
 
+  m_feedsModel->reloadCountsOfWholeModel();
   m_messagesModel->reloadWholeLayout();
 }
 
@@ -202,7 +200,7 @@ void FeedReader::loadSavedMessageFilters() {
   m_messageFilters =
     DatabaseQueries::getMessageFilters(qApp->database()->driver()->connection(metaObject()->className()));
 
-  for (auto* filter : qAsConst(m_messageFilters)) {
+  for (auto* filter : std::as_const(m_messageFilters)) {
     filter->setParent(this);
   }
 }
@@ -318,7 +316,7 @@ void FeedReader::executeNextAutoUpdate() {
 
   if (!qApp->feedUpdateLock()->tryLock()) {
     qDebugNN << LOGSEC_CORE << "Delaying scheduled feed auto-downloads and message state synchronization for "
-             << "one minute due to another running update.";
+             << "some time due to another running update.";
 
     // Cannot update, quit.
     return;
@@ -331,6 +329,12 @@ void FeedReader::executeNextAutoUpdate() {
     QList<CacheForServiceRoot*> caches = FROM_STD_LIST(QList<CacheForServiceRoot*>, full_caches);
 
     synchronizeMessageData(caches);
+  }
+
+  if (disable_update_with_window) {
+    qDebugNN << LOGSEC_CORE << "Delaying scheduled feed auto-download for some time since window "
+             << "is focused. Article cache was synchronised nonetheless.";
+    return;
   }
 
   // Pass needed interval data and lets the model decide which feeds

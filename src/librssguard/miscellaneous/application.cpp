@@ -3,14 +3,23 @@
 #include "miscellaneous/application.h"
 
 #include "3rd-party/boolinq/boolinq.h"
+
+#if defined(SYSTEM_SQLITE3)
+#include <sqlite3.h>
+#else
+#include "3rd-party/sqlite/sqlite3.h"
+#endif
+
+#include "core/feedsmodel.h"
 #include "dynamic-shortcuts/dynamicshortcuts.h"
 #include "exceptions/applicationexception.h"
 #include "gui/dialogs/formabout.h"
 #include "gui/dialogs/formlog.h"
 #include "gui/dialogs/formmain.h"
 #include "gui/feedmessageviewer.h"
-#include "gui/feedsview.h"
 #include "gui/messagebox.h"
+#include "gui/messagesview.h"
+#include "gui/notifications/toastnotificationsmanager.h"
 #include "gui/toolbars/statusbar.h"
 #include "gui/webviewers/qtextbrowser/textbrowserviewer.h"
 #include "miscellaneous/feedreader.h"
@@ -18,14 +27,11 @@
 #include "miscellaneous/iofactory.h"
 #include "miscellaneous/mutex.h"
 #include "miscellaneous/notificationfactory.h"
+#include "miscellaneous/settings.h"
 #include "network-web/adblock/adblockicon.h"
 #include "network-web/adblock/adblockmanager.h"
 #include "network-web/webfactory.h"
 #include "services/abstract/serviceroot.h"
-#include "services/owncloud/owncloudserviceentrypoint.h"
-#include "services/standard/standardserviceentrypoint.h"
-#include "services/standard/standardserviceroot.h"
-#include "services/tt-rss/ttrssserviceentrypoint.h"
 
 #include <iostream>
 
@@ -37,13 +43,18 @@
 #include <QSslSocket>
 #include <QThreadPool>
 #include <QTimer>
+#include <QVersionNumber>
+
+#if defined(NO_LITE) && defined(MEDIAPLAYER_LIBMPV_OPENGL)
+#include <QQuickWindow>
+#endif
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
 #include <QDBusConnection>
 #include <QDBusMessage>
 #endif
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 #include "gui/webviewers/webengine/webengineviewer.h" // WebEngine-based web browsing.
 #include "network-web/webengine/networkurlinterceptor.h"
 
@@ -51,6 +62,18 @@
 #include <QWebEngineDownloadRequest>
 #else
 #include <QWebEngineDownloadItem>
+#endif
+
+#include <QWebEngineProfile>
+#include <QWebEngineSettings>
+#endif
+
+#if defined(Q_OS_WIN)
+#if QT_VERSION_MAJOR == 5
+#include <QtPlatformHeaders/QWindowsWindowFunctions>
+#else
+#include <QWindow>
+#include <QtGui/qpa/qplatformwindow_p.h>
 #endif
 #endif
 
@@ -64,6 +87,30 @@
 
 Application::Application(const QString& id, int& argc, char** argv, const QStringList& raw_cli_args)
   : SingleApplication(id, argc, argv), m_rawCliArgs(raw_cli_args), m_updateFeedsLock(new Mutex()) {
+
+#if defined(NO_LITE) && defined(MEDIAPLAYER_LIBMPV_OPENGL)
+  // HACK: Force rendering system to use OpenGL backend.
+#if QT_VERSION_MAJOR < 6
+  QQuickWindow::setSceneGraphBackend(QSGRendererInterface::GraphicsApi::OpenGL);
+#else
+  QQuickWindow::setGraphicsApi(QSGRendererInterface::GraphicsApi::OpenGL);
+#endif
+#endif
+
+  /*
+  QString aa = "Fri, 12 Apr 2024 5:23:57 GMT";
+  QDateTimeParser par(QMetaType::QDateTime, QDateTimeParser::FromString, QCalendar());
+
+  par.setDefaultLocale(QLocale::c());
+
+  QString st = "ddd, dd MMM yyyy H:m:s";
+  bool parsed = par.parseFormat(st);
+  QDateTime dt;
+  par.fromString(aa, &dt);
+
+  // QDateTime tim = QDateTime::fromString(aa, form);
+  QString check = dt.toString();
+*/
   QString custom_ua;
 
   parseCmdArgumentsFromMyInstance(raw_cli_args, custom_ua);
@@ -77,23 +124,38 @@ Application::Application(const QString& id, int& argc, char** argv, const QStrin
   m_trayIcon = nullptr;
   m_settings = Settings::setupSettings(this);
 
-#if defined(USE_WEBENGINE)
-  if (!m_forcedNoWebEngine && qgetenv("QTWEBENGINE_CHROMIUM_FLAGS").isEmpty()) {
-    qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
-            settings()->value(GROUP(Browser), SETTING(Browser::WebEngineChromiumFlags)).toString().toLocal8Bit());
+#if defined(NO_LITE)
+  if (!m_forcedLite && qEnvironmentVariableIsEmpty("QTWEBENGINE_CHROMIUM_FLAGS")) {
+    QString flags = settings()->value(GROUP(Browser), SETTING(Browser::WebEngineChromiumFlags)).toString();
+
+    // NOTE: We do not want sandbox on Linux builds.
+#if defined(Q_OS_LINUX) && !defined(IS_FLATPAK_BUILD)
+    if (!flags.contains(QSL("--no-sandbox"))) {
+      qDebugNN << LOGSEC_CORE << "Appending --no-sandbox to QTWEBENGINE_CHROMIUM_FLAGS.";
+      flags.append(QSL(" --no-sandbox"));
+    }
+#endif
+
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.toLocal8Bit());
   }
 #endif
+
+  m_localization = new Localization(this);
+
+  m_localization->loadActiveLanguage();
 
   m_nodejs = new NodeJs(m_settings, this);
   m_workHorsePool = new QThreadPool(this);
   m_webFactory = new WebFactory(this);
   m_system = new SystemFactory(this);
   m_skins = new SkinFactory(this);
-  m_localization = new Localization(this);
   m_icons = new IconFactory(this);
   m_database = new DatabaseFactory(this);
   m_downloadManager = nullptr;
   m_notifications = new NotificationFactory(this);
+  m_toastNotifications = settings()->value(GROUP(GUI), SETTING(GUI::UseToastNotifications)).toBool()
+                           ? new ToastNotificationsManager(this)
+                           : nullptr;
   m_shouldRestart = false;
 
 #if defined(Q_OS_WIN)
@@ -123,19 +185,18 @@ Application::Application(const QString& id, int& argc, char** argv, const QStrin
 
   determineFirstRuns();
 
-  //: Abbreviation of language, e.g. en.
-  //: Use ISO 639-1 code here combined with ISO 3166-1 (alpha-2) code.
-  //: Examples: "cs", "en", "it", "cs_CZ", "en_GB", "en_US".
-  QObject::tr("LANG_ABBREV");
-
-  //: Name of translator - optional.
-  QObject::tr("LANG_AUTHOR");
-
   // Add an extra path for non-system icon themes and set current icon theme
   // and skin.
   m_icons->setupSearchPaths();
   m_icons->loadCurrentIconTheme();
-  m_skins->loadCurrentSkin();
+  m_skins->loadCurrentSkin(usingLite());
+
+  if (m_toastNotifications != nullptr) {
+    connect(m_toastNotifications,
+            &ToastNotificationsManager::openingArticleInArticleListRequested,
+            this,
+            &Application::loadMessageToFeedAndArticleList);
+  }
 
   connect(this, &Application::aboutToQuit, this, &Application::onAboutToQuit);
   connect(this, &Application::commitDataRequest, this, &Application::onCommitData);
@@ -163,14 +224,30 @@ Application::Application(const QString& id, int& argc, char** argv, const QStrin
 
   m_webFactory->setCustomUserAgent(custom_ua);
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
   m_webFactory->urlIinterceptor()->load();
 
-  const QString web_data_root = userDataFolder() + QDir::separator() + QSL("web");
+  QString engine_cache_folder;
+  QString engine_storage_folder;
 
-  m_webFactory->engineProfile()->setCachePath(web_data_root + QDir::separator() + QSL("cache"));
+#if defined(NDEBUG)
+  engine_cache_folder = cacheFolder();
+  engine_storage_folder = userDataFolder();
+#else
+  engine_cache_folder = QStandardPaths::writableLocation(QStandardPaths::StandardLocation::TempLocation) +
+                        QDir::separator() + QSL(APP_NAME) + QDir::separator() + QSL("cache");
+  engine_storage_folder = QStandardPaths::writableLocation(QStandardPaths::StandardLocation::TempLocation) +
+                          QDir::separator() + QSL(APP_NAME) + QDir::separator() + QSL("storage");
+#endif
+
+  m_webFactory->engineProfile()->setCachePath(engine_cache_folder + QDir::separator() + QSL("web") + QDir::separator() +
+                                              QSL("cache"));
+  m_webFactory->engineProfile()->setPersistentStoragePath(engine_storage_folder + QDir::separator() + QSL("web") +
+                                                          QDir::separator() + QSL("storage"));
   m_webFactory->engineProfile()->setHttpCacheType(QWebEngineProfile::HttpCacheType::DiskHttpCache);
-  m_webFactory->engineProfile()->setPersistentStoragePath(web_data_root + QDir::separator() + QSL("storage"));
+
+  m_webFactory->loadCustomCss(userDataFolder() + QDir::separator() + QSL("web") + QDir::separator() +
+                              QSL("user-styles.css"));
 
   if (custom_ua.isEmpty()) {
     m_webFactory->engineProfile()->setHttpUserAgent(QString(HTTP_COMPLETE_USERAGENT));
@@ -214,10 +291,11 @@ Application::Application(const QString& id, int& argc, char** argv, const QStrin
     m_notifications->load(settings());
   }
 
-  QTimer::singleShot(1000, system(), &SystemFactory::checkForUpdatesOnStartup);
+  QTimer::singleShot(15000, system(), &SystemFactory::checkForUpdatesOnStartup);
 
   setupWorkHorsePool();
 
+  qDebugNN << LOGSEC_CORE << "SQLite version:" << QUOTE_W_SPACE_DOT(SQLITE_VERSION);
   qDebugNN << LOGSEC_CORE << "OpenSSL version:" << QUOTE_W_SPACE_DOT(QSslSocket::sslLibraryVersionString());
   qDebugNN << LOGSEC_CORE << "OpenSSL supported:" << QUOTE_W_SPACE_DOT(QSslSocket::supportsSsl());
   qDebugNN << LOGSEC_CORE << "Global thread pool has"
@@ -292,16 +370,18 @@ void Application::loadDynamicShortcuts() {
   DynamicShortcuts::load(userActions());
 }
 
-void Application::showPolls() const {
+void Application::offerPolls() const {
   /*
   if (isFirstRunCurrentVersion()) {
     qApp->showGuiMessage(Notification::Event::GeneralEvent,
-                         {QSL("%1 survey").arg(QSL(APP_NAME)),
-                          QSL("Please, fill the survey."),
+                         {tr("%1 survey").arg(QSL(APP_NAME)),
+                          tr("Please, fill the survey."),
                           QSystemTrayIcon::MessageIcon::Warning},
                          {false, true, false},
                          {tr("Go to survey"), [] {
-                            qApp->web()->openUrlInExternalBrowser(QSL("https://forms.gle/FdzrwFGozCGViK8QA"));
+                            qApp->web()->openUrlInExternalBrowser(QSL("https://docs.google.com/forms/d/e/"
+                                                                      "1FAIpQLScQ_r_EwM6qojPsIMQHGdnSktU-WGHgporN69mpU-"
+                                                                      "Tvq8y7XQ/viewform?usp=sf_link"));
                           }});
   }
   */
@@ -397,6 +477,10 @@ void Application::displayLogMessageInDialog(const QString& message) {
   }
 }
 
+ToastNotificationsManager* Application::toastNotifications() const {
+  return m_toastNotifications;
+}
+
 QThreadPool* Application::workHorsePool() const {
   return m_workHorsePool;
 }
@@ -409,9 +493,9 @@ QStringList Application::rawCliArgs() const {
   return m_rawCliArgs;
 }
 
-#if defined(USE_WEBENGINE)
-bool Application::forcedNoWebEngine() const {
-  return m_forcedNoWebEngine;
+#if defined(NO_LITE)
+bool Application::forcedLite() const {
+  return m_forcedLite;
 }
 #endif
 
@@ -470,6 +554,13 @@ QWidget* Application::mainFormWidget() {
 
 void Application::setMainForm(FormMain* main_form) {
   m_mainForm = main_form;
+
+  if (m_toastNotifications != nullptr) {
+    connect(m_toastNotifications,
+            &ToastNotificationsManager::reloadMessageListRequested,
+            m_mainForm->tabWidget()->feedMessageViewer()->messagesView(),
+            &MessagesView::reloadSelections);
+  }
 }
 
 QString Application::configFolder() const {
@@ -477,9 +568,11 @@ QString Application::configFolder() const {
 }
 
 QString Application::userDataAppFolder() const {
+  static int major_version = QVersionNumber::fromString(QSL(APP_VERSION)).majorVersion();
+
   // In "app" folder, we would like to separate all user data into own subfolder,
   // therefore stick to "data" folder in this mode.
-  return QDir::toNativeSeparators(applicationDirPath() + QDir::separator() + QSL("data4"));
+  return QDir::toNativeSeparators(applicationDirPath() + QDir::separator() + QSL("data%1").arg(major_version));
 }
 
 QString Application::userDataFolder() {
@@ -494,13 +587,21 @@ QString Application::userDataFolder() {
   }
 }
 
-QString Application::replaceDataUserDataFolderPlaceholder(QString text) const {
+QString Application::cacheFolder() {
+#if defined(Q_OS_LINUX)
+  return QStandardPaths::writableLocation(QStandardPaths::StandardLocation::CacheLocation);
+#else
+  return userDataFolder();
+#endif
+}
+
+QString Application::replaceUserDataFolderPlaceholder(QString text) const {
   auto user_data_folder = qApp->userDataFolder();
 
   return text.replace(QSL(USER_DATA_PLACEHOLDER), user_data_folder);
 }
 
-QStringList Application::replaceDataUserDataFolderPlaceholder(QStringList texts) const {
+QStringList Application::replaceUserDataFolderPlaceholder(QStringList texts) const {
   auto user_data_folder = qApp->userDataFolder();
 
   return texts.replaceInStrings(QSL(USER_DATA_PLACEHOLDER), user_data_folder);
@@ -508,12 +609,13 @@ QStringList Application::replaceDataUserDataFolderPlaceholder(QStringList texts)
 
 QString Application::userDataHomeFolder() const {
   QString pth;
+  static int major_version = QVersionNumber::fromString(QSL(APP_VERSION)).majorVersion();
 
 #if defined(Q_OS_ANDROID)
   return pth = IOFactory::getSystemFolder(QStandardPaths::GenericDataLocation) + QDir::separator() + QSL(APP_NAME) +
-               QSL(" 4");
+               QSL(" %1").arg(major_version);
 #else
-  return pth = configFolder() + QDir::separator() + QSL(APP_NAME) + QSL(" 4");
+  return pth = configFolder() + QDir::separator() + QSL(APP_NAME) + QSL(" %1").arg(major_version);
 #endif
 
   return QDir::toNativeSeparators(pth);
@@ -553,8 +655,6 @@ void Application::backupDatabaseSettings(bool backup_database,
   }
 
   if (backup_database) {
-    // We need to save the database first.
-    database()->driver()->saveDatabase();
     database()->driver()->backupDatabase(target_path, backup_name);
   }
 }
@@ -623,13 +723,25 @@ void Application::showTrayIcon() {
         if (SystemTrayIcon::isSystemTrayAreaAvailable()) {
           qWarningNN << LOGSEC_GUI << "Tray icon is available, showing now.";
           trayIcon()->show();
-
-          offerChanges();
-          showPolls();
         }
         else {
           m_feedReader->feedsModel()->notifyWithCounts();
         }
+
+        // NOTE: Below things have to be performed after tray icon is (if enabled)
+        // initialized.
+        offerChanges();
+        offerPolls();
+
+#if defined(Q_OS_WIN)
+#if QT_VERSION_MAJOR == 6
+        // NOTE: Fixes https://github.com/martinrotter/rssguard/issues/953 for Qt 6.
+        using QWindowsWindow = QNativeInterface::Private::QWindowsWindow;
+        if (auto w_w = qApp->mainForm()->windowHandle()->nativeInterface<QWindowsWindow>()) {
+          w_w->setHasBorderInFullScreen(true);
+        }
+#endif
+#endif
       });
   }
   else {
@@ -649,24 +761,39 @@ void Application::deleteTrayIcon() {
   }
 }
 
-void Application::showGuiMessage(Notification::Event event,
-                                 const GuiMessage& msg,
-                                 const GuiMessageDestination& dest,
-                                 const GuiAction& action,
-                                 QWidget* parent) {
-  if (SystemTrayIcon::areNotificationsEnabled()) {
+void Application::showGuiMessageCore(Notification::Event event,
+                                     const GuiMessage& msg,
+                                     GuiMessageDestination dest,
+                                     const GuiAction& action,
+                                     QWidget* parent) {
+  if (m_notifications->areNotificationsEnabled()) {
     auto notification = m_notifications->notificationForEvent(event);
 
     notification.playSound(this);
 
-    if (SystemTrayIcon::isSystemTrayDesired() && SystemTrayIcon::isSystemTrayAreaAvailable() &&
-        notification.balloonEnabled() && dest.m_tray) {
-      trayIcon()->showMessage(msg.m_title.simplified().isEmpty() ? Notification::nameForEvent(notification.event())
-                                                                 : msg.m_title,
-                              msg.m_message,
-                              msg.m_type,
-                              TRAY_ICON_BUBBLE_TIMEOUT,
-                              std::move(action.m_action));
+    if (notification.balloonEnabled() && dest.m_tray) {
+      if (notification.event() == Notification::Event::ArticlesFetchingStarted && m_mainForm != nullptr &&
+          m_mainForm->isActiveWindow() && m_mainForm->isVisible()) {
+        // We do not need to display the notification because
+        // user will see that fetching is running because
+        // he will see progress bar.
+        return;
+      }
+
+      if (m_toastNotifications != nullptr) {
+        // Toasts are enabled.
+        m_toastNotifications->showNotification(event, msg, action);
+      }
+      else if (SystemTrayIcon::isSystemTrayDesired() && SystemTrayIcon::isSystemTrayAreaAvailable()) {
+        // Use tray icon balloons (which are implemented as native notifications on most systems.
+        trayIcon()->showMessage(msg.m_title.simplified().isEmpty() ? Notification::nameForEvent(notification.event())
+                                                                   : msg.m_title,
+                                msg.m_message,
+                                msg.m_type,
+                                TRAY_ICON_BUBBLE_TIMEOUT,
+                                std::move(action.m_action));
+      }
+
       return;
     }
   }
@@ -693,16 +820,44 @@ void Application::showGuiMessage(Notification::Event event,
   }
 }
 
+void Application::loadMessageToFeedAndArticleList(Feed* feed, const Message& message) {
+  m_mainForm->display();
+  m_mainForm->tabWidget()->feedMessageViewer()->loadMessageToFeedAndArticleList(feed, message);
+}
+
+void Application::showGuiMessage(Notification::Event event,
+                                 const GuiMessage& msg,
+                                 GuiMessageDestination dest,
+                                 const GuiAction& action,
+                                 QWidget* parent) {
+  QMetaObject::invokeMethod(this,
+                            "showGuiMessageCore",
+                            Qt::ConnectionType::QueuedConnection,
+                            Q_ARG(Notification::Event, event),
+                            Q_ARG(const GuiMessage&, msg),
+                            Q_ARG(GuiMessageDestination, dest),
+                            Q_ARG(const GuiAction&, action),
+                            Q_ARG(QWidget*, parent));
+}
+
 WebViewer* Application::createWebView() {
-#if !defined(USE_WEBENGINE)
+#if !defined(NO_LITE)
   return new TextBrowserViewer();
 #else
-  if (forcedNoWebEngine()) {
+  if (forcedLite()) {
     return new TextBrowserViewer();
   }
   else {
     return new WebEngineViewer();
   }
+#endif
+}
+
+bool Application::usingLite() const {
+#if !defined(NO_LITE)
+  return true;
+#else
+  return forcedLite();
 #endif
 }
 
@@ -733,7 +888,7 @@ void Application::onAboutToQuit() {
   // Make sure that we obtain close lock BEFORE even trying to quit the application.
   const bool locked_safely = feedUpdateLock()->tryLock(4 * CLOSE_LOCK_TIMEOUT);
 
-  processEvents();
+  QCoreApplication::processEvents();
   qDebugNN << LOGSEC_CORE << "Cleaning up resources and saving application state.";
 
   if (locked_safely) {
@@ -750,7 +905,13 @@ void Application::onAboutToQuit() {
   }
 
   qApp->feedReader()->quit();
-  database()->driver()->saveDatabase();
+
+  try {
+    database()->driver()->saveDatabase();
+  }
+  catch (const ApplicationException& ex) {
+    qCriticalNN << LOGSEC_DB << "Error when saving DB:" << QUOTE_W_SPACE_DOT(ex.message());
+  }
 
   if (mainForm() != nullptr) {
     mainForm()->saveSize();
@@ -777,7 +938,10 @@ void Application::showMessagesNumber(int unread_messages, bool any_feed_has_new_
     m_trayIcon->setNumber(unread_messages, any_feed_has_new_unread_messages);
   }
 
-  // Set task bar overlay with number of unread articles.
+  // Use Qt function to set "badge" number directly in some cases.
+#if defined(Q_OS_MACOS) && QT_VERSION >= 0x060500 // Qt >= 6.5.0
+  qApp->setBadgeNumber(unread_messages);
+#else
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
   // Use D-Bus "LauncherEntry" service on Linux.
   bool task_bar_count_enabled = settings()->value(GROUP(GUI), SETTING(GUI::UnreadNumbersOnTaskBar)).toBool();
@@ -826,6 +990,7 @@ void Application::showMessagesNumber(int unread_messages, bool any_feed_has_new_
   else {
     qCriticalNN << LOGSEC_GUI << "Main form not set for setting numbers.";
   }
+#endif
 #endif
 
   if (m_mainForm != nullptr) {
@@ -893,7 +1058,7 @@ void Application::restart() {
   quit();
 }
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 
 #if QT_VERSION_MAJOR == 6
 void Application::downloadRequested(QWebEngineDownloadRequest* download_item) {
@@ -930,15 +1095,24 @@ void Application::onFeedUpdatesProgress(const Feed* feed, int current, int total
 }
 
 void Application::onFeedUpdatesFinished(const FeedDownloadResults& results) {
-  auto fds = results.updatedFeeds();
-  bool some_unquiet_feed = boolinq::from(fds).any([](const QPair<Feed*, int>& fd) {
-    return !fd.first->isQuiet();
+  auto fds = results.updatedFeeds().keys();
+  bool some_unquiet_feed = boolinq::from(fds).any([](Feed* fd) {
+    return !fd->isQuiet();
   });
 
   if (some_unquiet_feed) {
-    // Now, inform about results via GUI message/notification.
-    qApp->showGuiMessage(Notification::Event::NewUnreadArticlesFetched,
-                         {tr("Unread articles fetched"), results.overview(10), QSystemTrayIcon::MessageIcon::NoIcon});
+    GuiMessage msg = {tr("Unread articles fetched"), QString(), QSystemTrayIcon::MessageIcon::NoIcon};
+
+    if (m_toastNotifications != nullptr) {
+      // Show custom and richer overview of updated feeds and articles.
+      msg.m_feedFetchResults = results;
+    }
+    else {
+      // Show simpler overview of updated feeds.
+      msg.m_message = results.overview(10);
+    }
+
+    qApp->showGuiMessage(Notification::Event::NewUnreadArticlesFetched, msg);
   }
 
 #if defined(Q_OS_WIN)
@@ -1050,7 +1224,7 @@ void Application::parseCmdArgumentsFromOtherInstance(const QString& message) {
 
   messages = cmd_parser.positionalArguments();
 
-  for (const QString& msg : qAsConst(messages)) {
+  for (const QString& msg : std::as_const(messages)) {
     // Application was running, and someone wants to add new feed.
     ServiceRoot* rt = boolinq::from(feedReader()->feedsModel()->serviceRoots()).firstOrDefault([](ServiceRoot* root) {
       return root->supportsFeedAdding();
@@ -1111,10 +1285,10 @@ void Application::parseCmdArgumentsFromMyInstance(const QStringList& raw_cli_arg
     m_cmdParser.showVersion();
   }
 
-#if defined(USE_WEBENGINE)
-  m_forcedNoWebEngine = m_cmdParser.isSet(QSL(CLI_FORCE_NOWEBENGINE_SHORT));
+#if defined(NO_LITE)
+  m_forcedLite = m_cmdParser.isSet(QSL(CLI_FORCE_LITE_SHORT));
 
-  if (m_forcedNoWebEngine) {
+  if (m_forcedLite) {
     qDebugNN << LOGSEC_CORE << "Forcing no-web-engine.";
   }
 #endif
@@ -1170,9 +1344,9 @@ void Application::fillCmdArgumentsParser(QCommandLineParser& parser) {
   QCommandLineOption disable_singleinstance({QSL(CLI_SIN_SHORT), QSL(CLI_SIN_LONG)},
                                             QSL("Allow running of multiple application instances."));
 
-#if defined(USE_WEBENGINE)
-  QCommandLineOption force_nowebengine({QSL(CLI_FORCE_NOWEBENGINE_SHORT), QSL(CLI_FORCE_NOWEBENGINE_LONG)},
-                                       QSL("Force usage of simpler text-based embedded web browser."));
+#if defined(NO_LITE)
+  QCommandLineOption force_lite({QSL(CLI_FORCE_LITE_SHORT), QSL(CLI_FORCE_LITE_LONG)},
+                                QSL("Force lite variant of application."));
 #endif
 
   QCommandLineOption disable_only_debug({QSL(CLI_NDEBUG_SHORT), QSL(CLI_NDEBUG_LONG)},
@@ -1198,8 +1372,8 @@ void Application::fillCmdArgumentsParser(QCommandLineParser& parser) {
 
   parser.addOptions({
     help, version, log_file, custom_data_folder, disable_singleinstance, disable_only_debug, disable_debug,
-#if defined(USE_WEBENGINE)
-      force_nowebengine,
+#if defined(NO_LITE)
+      force_lite,
 #endif
       forced_style, adblock_port, custom_ua, custom_threads
   });
@@ -1208,19 +1382,25 @@ void Application::fillCmdArgumentsParser(QCommandLineParser& parser) {
                                QSL("[url-1 ... url-n]"));
 }
 
-void Application::onNodeJsPackageUpdateError(const QList<NodeJs::PackageMetadata>& pkgs, const QString& error) {
+void Application::onNodeJsPackageUpdateError(const QObject* sndr,
+                                             const QList<NodeJs::PackageMetadata>& pkgs,
+                                             const QString& error) {
+  Q_UNUSED(sndr)
   qApp->showGuiMessage(Notification::Event::NodePackageFailedToUpdate,
-                       {{},
-                        tr("Packages %1 were NOT updated because of error: %2.")
+                       {tr("Node.js"),
+                        tr("Packages were NOT updated because of error: %2. Affected packages:\n%1")
                           .arg(NodeJs::packagesToString(pkgs), error),
                         QSystemTrayIcon::MessageIcon::Critical});
 }
 
-void Application::onNodeJsPackageInstalled(const QList<NodeJs::PackageMetadata>& pkgs, bool already_up_to_date) {
+void Application::onNodeJsPackageInstalled(const QObject* sndr,
+                                           const QList<NodeJs::PackageMetadata>& pkgs,
+                                           bool already_up_to_date) {
+  Q_UNUSED(sndr)
   if (!already_up_to_date) {
     qApp->showGuiMessage(Notification::Event::NodePackageUpdated,
-                         {{},
-                          tr("Packages %1 were updated.").arg(NodeJs::packagesToString(pkgs)),
+                         {tr("Node.js"),
+                          tr("These packages were installed/updated:\n%1").arg(NodeJs::packagesToString(pkgs)),
                           QSystemTrayIcon::MessageIcon::Information});
   }
 }

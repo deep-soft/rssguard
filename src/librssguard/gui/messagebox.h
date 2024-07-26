@@ -3,16 +3,15 @@
 #ifndef MESSAGEBOX_H
 #define MESSAGEBOX_H
 
+#include <functional>
+
 #include <QDialogButtonBox>
 #include <QMessageBox>
 
-#include <functional>
-
-class MsgBox : public QMessageBox {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC MsgBox : public QMessageBox {
+    Q_OBJECT
 
   public:
-
     // Constructors and destructors.
     explicit MsgBox(QWidget* parent = nullptr);
 

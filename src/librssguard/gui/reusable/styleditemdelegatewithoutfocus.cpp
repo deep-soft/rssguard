@@ -2,7 +2,8 @@
 
 #include "gui/reusable/styleditemdelegatewithoutfocus.h"
 
-#include "miscellaneous/application.h"
+#include "definitions/definitions.h"
+#include "definitions/globals.h"
 
 StyledItemDelegateWithoutFocus::StyledItemDelegateWithoutFocus(int height_row, int padding_row, QObject* parent)
   : QStyledItemDelegate(parent), m_rowHeight(height_row), m_rowPadding(padding_row) {}
@@ -12,11 +13,17 @@ void StyledItemDelegateWithoutFocus::paint(QPainter* painter,
                                            const QModelIndex& index) const {
   QStyleOptionViewItem item_option(option);
 
-  if ((item_option.state & QStyle::StateFlag::State_HasFocus) == QStyle::StateFlag::State_HasFocus) {
+  if (Globals::hasFlag(item_option.state, QStyle::StateFlag::State_HasFocus)) {
     item_option.state = item_option.state ^ QStyle::StateFlag::State_HasFocus;
   }
 
-  if ((item_option.state & QStyle::StateFlag::State_Selected) == QStyle::StateFlag::State_Selected &&
+  bool rtl = index.data(TEXT_DIRECTION_ROLE).value<Qt::LayoutDirection>() == Qt::LayoutDirection::RightToLeft;
+
+  if (rtl) {
+    item_option.direction = Qt::LayoutDirection::RightToLeft;
+  }
+
+  if (Globals::hasFlag(item_option.state, QStyle::StateFlag::State_Selected) &&
       index.data(Qt::ItemDataRole::ForegroundRole).isValid()) {
     item_option.palette.setColor(QPalette::ColorRole::HighlightedText,
                                  index.data(HIGHLIGHTED_FOREGROUND_TITLE_ROLE).value<QColor>());

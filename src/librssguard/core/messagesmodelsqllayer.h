@@ -3,10 +3,15 @@
 #ifndef MESSAGESMODELSQLLAYER_H
 #define MESSAGESMODELSQLLAYER_H
 
-#include <QSqlDatabase>
-
 #include <QList>
 #include <QMap>
+#include <QPair>
+#include <QSqlDatabase>
+
+struct SortColumnsAndOrders {
+    QList<int> m_columns;
+    QList<Qt::SortOrder> m_orders;
+};
 
 class MessagesModelSqlLayer {
   public:
@@ -18,9 +23,11 @@ class MessagesModelSqlLayer {
     // Sets SQL WHERE clause, without "WHERE" keyword.
     void setFilter(const QString& filter);
 
+    SortColumnsAndOrders sortColumnAndOrders() const;
+
   protected:
     QString orderByClause() const;
-    QString selectStatement() const;
+    QString selectStatement(int additional_article_id = -1) const;
     QString formatFields() const;
 
     bool isColumnNumeric(int column_id) const;

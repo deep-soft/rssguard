@@ -3,14 +3,14 @@
 #ifndef MESSAGEPREVIEWER_H
 #define MESSAGEPREVIEWER_H
 
-#include <QToolButton>
-
 #include "core/message.h"
+#include "gui/tabcontent.h"
 #include "services/abstract/label.h"
 #include "services/abstract/rootitem.h"
 
 #include <QAction>
 #include <QPointer>
+#include <QToolButton>
 #include <QUrl>
 
 class QGridLayout;
@@ -32,7 +32,7 @@ class LabelToolbarAction : public QAction {
     QPointer<Label> m_label;
 };
 
-class MessagePreviewer : public QWidget {
+class MessagePreviewer : public TabContent {
     Q_OBJECT
 
   public:
@@ -41,7 +41,7 @@ class MessagePreviewer : public QWidget {
 
     void reloadFontSettings();
 
-    WebBrowser* webBrowser() const;
+    virtual WebBrowser* webBrowser() const;
 
   public slots:
     void setToolbarsVisible(bool visible);

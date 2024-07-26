@@ -5,8 +5,8 @@
 
 #include <QLineEdit>
 
-class BaseLineEdit : public QLineEdit {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC BaseLineEdit : public QLineEdit {
+    Q_OBJECT
 
   public:
     explicit BaseLineEdit(QWidget* parent = nullptr);

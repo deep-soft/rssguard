@@ -3,9 +3,9 @@
 #ifndef FEEDSMODEL_H
 #define FEEDSMODEL_H
 
-#include <QAbstractItemModel>
-
 #include "services/abstract/rootitem.h"
+
+#include <QAbstractItemModel>
 
 class Category;
 class Feed;
@@ -54,11 +54,6 @@ class RSSGUARD_DLLSPEC FeedsModel : public QAbstractItemModel {
     // This method might change some properties of some feeds.
     QList<Feed*> feedsForScheduledUpdate(bool auto_update_now);
 
-    // Returns (undeleted) messages for given feeds.
-    // This is usually used for displaying whole feeds
-    // in "newspaper" mode.
-    QList<Message> messagesForItem(RootItem* item) const;
-
     // Returns ALL RECURSIVE CHILD feeds contained within single index.
     QList<Feed*> feedsForIndex(const QModelIndex& index = QModelIndex()) const;
 
@@ -78,7 +73,9 @@ class RSSGUARD_DLLSPEC FeedsModel : public QAbstractItemModel {
     // Access to root item.
     RootItem* rootItem() const;
 
+    void setupBehaviorDuringFetching();
     void setupFonts();
+    void informAboutDatabaseCleanup();
 
   public slots:
     void loadActivatedServiceAccounts();
@@ -148,6 +145,8 @@ class RSSGUARD_DLLSPEC FeedsModel : public QAbstractItemModel {
     void reloadMessageListRequested(bool mark_selected_messages_read);
 
   private:
+    bool m_updateDuringFetching;
+    QIcon m_updateItemIcon;
     RootItem* m_rootItem;
     QList<QString> m_headerData;
     QList<QString> m_tooltipData;

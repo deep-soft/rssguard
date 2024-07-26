@@ -7,7 +7,7 @@
 #include "gui/reusable/progressbarwithtext.h"
 #include "gui/tabwidget.h"
 #include "miscellaneous/iconfactory.h"
-#include "miscellaneous/mutex.h"
+#include "miscellaneous/settings.h"
 
 #include <QLabel>
 #include <QToolButton>
@@ -89,6 +89,8 @@ QList<QAction*> StatusBar::convertActions(const QStringList& actions) {
   bool progress_visible = this->actions().contains(m_barProgressFeedsAction) && m_barProgressFeeds->isVisible();
   QList<QAction*> available_actions = availableActions();
   QList<QAction*> spec_actions;
+
+  spec_actions.reserve(actions.size());
 
   // Iterate action names and add respectable
   // actions into the toolbar.

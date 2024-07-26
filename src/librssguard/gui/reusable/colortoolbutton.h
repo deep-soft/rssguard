@@ -5,14 +5,14 @@
 
 #include <QToolButton>
 
-class ColorToolButton : public QToolButton {
+class RSSGUARD_DLLSPEC ColorToolButton : public QToolButton {
     Q_OBJECT
 
   public:
     explicit ColorToolButton(QWidget* parent = nullptr);
 
     QColor color() const;
-    void setColor(const QColor& color);
+    void setColor(const QColor& color, bool inform_about_changes = true);
 
     QColor alternateColor() const;
     void setAlternateColor(const QColor& alt_color);

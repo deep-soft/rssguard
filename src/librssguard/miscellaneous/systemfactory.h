@@ -3,27 +3,24 @@
 #ifndef SYSTEMFACTORY_H
 #define SYSTEMFACTORY_H
 
-#include <QObject>
-
 #include "network-web/downloader.h"
 
 #include <QHash>
 #include <QMetaType>
 #include <QNetworkReply>
+#include <QObject>
 #include <QPair>
 #include <QRegularExpression>
 
-class UpdateUrl {
+class RSSGUARD_DLLSPEC UpdateUrl {
   public:
-
     QString m_fileUrl;
     QString m_name;
     QString m_size;
 };
 
-class UpdateInfo {
+class RSSGUARD_DLLSPEC UpdateInfo {
   public:
-
     QString m_availableVersion;
     QString m_changes;
     QDateTime m_date;
@@ -32,11 +29,10 @@ class UpdateInfo {
 
 Q_DECLARE_METATYPE(UpdateInfo)
 
-class SystemFactory : public QObject {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC SystemFactory : public QObject {
+    Q_OBJECT
 
   public:
-
     // Specifies possible states of auto-start functionality.
     enum class AutoStartStatus {
       Enabled,
@@ -81,7 +77,6 @@ class SystemFactory : public QObject {
     void updatesChecked(QPair<QList<UpdateInfo>, QNetworkReply::NetworkError> updates) const;
 
   private:
-
     // Performs parsing of downloaded file with list of updates.
     QList<UpdateInfo> parseUpdatesFile(const QByteArray& updates_file) const;
 };

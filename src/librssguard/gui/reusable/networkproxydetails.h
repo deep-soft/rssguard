@@ -3,17 +3,19 @@
 #ifndef NETWORKPROXYDETAILS_H
 #define NETWORKPROXYDETAILS_H
 
+#include <QNetworkProxy>
 #include <QWidget>
 
-#include "ui_networkproxydetails.h"
+namespace Ui {
+  class NetworkProxyDetails;
+}
 
-#include <QNetworkProxy>
-
-class NetworkProxyDetails : public QWidget {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC NetworkProxyDetails : public QWidget {
+    Q_OBJECT
 
   public:
     explicit NetworkProxyDetails(QWidget* parent = nullptr);
+    virtual ~NetworkProxyDetails();
 
     QNetworkProxy proxy() const;
     void setProxy(const QNetworkProxy& proxy);
@@ -25,7 +27,7 @@ class NetworkProxyDetails : public QWidget {
     void onProxyTypeChanged(int index);
 
   private:
-    Ui::NetworkProxyDetails m_ui;
+    QScopedPointer<Ui::NetworkProxyDetails> m_ui;
 };
 
 #endif // NETWORKPROXYDETAILS_H

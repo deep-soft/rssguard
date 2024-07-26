@@ -3,14 +3,13 @@
 #ifndef LINEEDITWITHSTATUS_H
 #define LINEEDITWITHSTATUS_H
 
-#include "gui/reusable/widgetwithstatus.h"
-
 #include "gui/reusable/baselineedit.h"
+#include "gui/reusable/widgetwithstatus.h"
 
 #include <QPlainTextEdit>
 
-class LineEditWithStatus : public WidgetWithStatus {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC LineEditWithStatus : public WidgetWithStatus {
+    Q_OBJECT
 
   public:
     explicit LineEditWithStatus(QWidget* parent = nullptr);
@@ -23,8 +22,8 @@ inline BaseLineEdit* LineEditWithStatus::lineEdit() const {
   return static_cast<BaseLineEdit*>(m_wdgInput);
 }
 
-class TextEditWithStatus : public WidgetWithStatus {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC TextEditWithStatus : public WidgetWithStatus {
+    Q_OBJECT
 
   public:
     explicit TextEditWithStatus(QWidget* parent = nullptr);

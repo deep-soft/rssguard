@@ -2,7 +2,6 @@
 
 #include "gui/settings/settingsgui.h"
 
-#include "3rd-party/boolinq/boolinq.h"
 #include "core/feedsmodel.h"
 #include "gui/dialogs/formmain.h"
 #include "gui/feedmessageviewer.h"
@@ -50,7 +49,10 @@ SettingsGui::SettingsGui(Settings* settings, QWidget* parent)
   m_ui->m_treeSkins->header()->setSectionResizeMode(2, QHeaderView::ResizeMode::ResizeToContents);
   m_ui->m_treeSkins->header()->setSectionResizeMode(3, QHeaderView::ResizeMode::ResizeToContents);
 
-  connect(m_ui->m_cmbStyles, &QComboBox::currentTextChanged, this, &SettingsGui::updateSkinOptions);
+  connect(m_ui->m_cmbStyles,
+          static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+          this,
+          &SettingsGui::updateSkinOptions);
 
   connect(m_ui->m_cmbIconTheme,
           static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
@@ -111,6 +113,10 @@ SettingsGui::~SettingsGui() {
   delete m_ui;
 }
 
+QIcon SettingsGui::icon() const {
+  return qApp->icons()->fromTheme(QSL("draw-freehand"), QSL("draw-star"));
+}
+
 bool SettingsGui::eventFilter(QObject* obj, QEvent* e) {
   Q_UNUSED(obj)
 
@@ -166,7 +172,7 @@ void SettingsGui::loadSettings() {
   const QString current_theme = qApp->icons()->currentIconTheme();
   auto icons = qApp->icons()->installedIconThemes();
 
-  for (const QString& icon_theme_name : qAsConst(icons)) {
+  for (const QString& icon_theme_name : std::as_const(icons)) {
     if (icon_theme_name == QSL(APP_NO_THEME)) {
       // Add just "no theme" on other systems.
       //: Label for disabling icon theme.
@@ -202,11 +208,21 @@ void SettingsGui::loadSettings() {
   // Load styles.
   auto styles = QStyleFactory::keys();
 
-  for (const QString& style_name : qAsConst(styles)) {
-    m_ui->m_cmbStyles->addItem(style_name);
+  m_ui->m_cmbStyles->addItem(
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    tr("system style"),
+#else
+    tr("default style"),
+#endif
+    APP_NO_THEME);
+
+  for (const QString& style_name : std::as_const(styles)) {
+    m_ui->m_cmbStyles->addItem(style_name, style_name);
   }
 
-  int item_style = m_ui->m_cmbStyles->findText(qApp->skins()->currentStyle(), Qt::MatchFlag::MatchFixedString);
+  int item_style = m_ui->m_cmbStyles->findData(qApp->skins()->currentStyle(),
+                                               Qt::ItemDataRole::UserRole,
+                                               Qt::MatchFlag::MatchFixedString);
 
   if (item_style >= 0) {
     m_ui->m_cmbStyles->setCurrentIndex(item_style);
@@ -219,7 +235,7 @@ void SettingsGui::loadSettings() {
   const QString selected_skin = qApp->skins()->selectedSkinName();
   auto skins = qApp->skins()->installedSkins();
 
-  for (const Skin& skin : qAsConst(skins)) {
+  for (const Skin& skin : std::as_const(skins)) {
     QTreeWidgetItem* new_item =
       new QTreeWidgetItem({skin.m_visibleName,
                            skin.m_author,
@@ -417,7 +433,7 @@ void SettingsGui::saveSettings() {
 
   // Set new style.
   if (m_ui->m_cmbStyles->currentIndex() >= 0 && m_ui->m_cmbStyles->isEnabled()) {
-    const QString new_style = m_ui->m_cmbStyles->currentText();
+    const QString new_style = m_ui->m_cmbStyles->currentData().toString();
     const QString old_style = qApp->settings()->value(GROUP(GUI), SETTING(GUI::Style)).toString();
 
     if (old_style != new_style) {
@@ -441,7 +457,10 @@ void SettingsGui::saveSettings() {
   m_ui->m_editorMessagesToolbar->saveToolBar();
   m_ui->m_editorStatusbar->saveToolBar();
 
-  qApp->mainForm()->tabWidget()->checkTabBarVisibility();
+  qApp->mainForm()->tabWidget()->updateAppearance();
+  qApp->mainForm()->tabWidget()->checkCornerButtonVisibility();
+
+  qApp->mainForm()->tabWidget()->feedMessageViewer()->normalizeToolbarHeights();
   qApp->mainForm()->tabWidget()->feedMessageViewer()->refreshVisualProperties();
 
   qApp->feedReader()->feedsModel()->reloadWholeLayout();

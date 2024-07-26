@@ -53,9 +53,8 @@ void Notification::playSound(Application* app) const {
       }
       else {
         play
-          ->setSource(QUrl::
-                        fromLocalFile(QDir::toNativeSeparators(app
-                                                                 ->replaceDataUserDataFolderPlaceholder(m_soundPath))));
+          ->setSource(QUrl::fromLocalFile(QDir::toNativeSeparators(app
+                                                                     ->replaceUserDataFolderPlaceholder(m_soundPath))));
       }
 
       play->setVolume(fractionalVolume());
@@ -83,9 +82,8 @@ void Notification::playSound(Application* app) const {
       }
       else {
         play
-          ->setSource(QUrl::
-                        fromLocalFile(QDir::toNativeSeparators(app
-                                                                 ->replaceDataUserDataFolderPlaceholder(m_soundPath))));
+          ->setSource(QUrl::fromLocalFile(QDir::toNativeSeparators(app
+                                                                     ->replaceUserDataFolderPlaceholder(m_soundPath))));
       }
 
       play->audioOutput()->setVolume(fractionalVolume());
@@ -102,7 +100,7 @@ void Notification::playSound(Application* app) const {
       }
       else {
         play->setMedia(QMediaContent(
-          QUrl::fromLocalFile(QDir::toNativeSeparators(app->replaceDataUserDataFolderPlaceholder(m_soundPath)))));
+          QUrl::fromLocalFile(QDir::toNativeSeparators(app->replaceUserDataFolderPlaceholder(m_soundPath)))));
       }
 
       play->setVolume(m_volume);
@@ -148,7 +146,7 @@ QString Notification::nameForEvent(Notification::Event event) {
       return QObject::tr("Node.js - package(s) updated");
 
     case Notification::Event::NodePackageFailedToUpdate:
-      return QObject::tr("Node.js - package(s) failed to updated");
+      return QObject::tr("Node.js - package(s) failed to update");
 
     default:
       return QObject::tr("Unknown event");

@@ -5,7 +5,9 @@
 
 #include "services/abstract/rootitem.h"
 
-class UnreadNode : public RootItem {
+class RSSGUARD_DLLSPEC UnreadNode : public RootItem {
+    Q_OBJECT
+
   public:
     explicit UnreadNode(RootItem* parent_item = nullptr);
 

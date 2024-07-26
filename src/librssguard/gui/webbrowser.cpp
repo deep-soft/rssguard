@@ -2,22 +2,24 @@
 
 #include "gui/webbrowser.h"
 
-#include "database/databasequeries.h"
+#include "definitions/globals.h"
 #include "gui/dialogs/formmain.h"
 #include "gui/messagebox.h"
-#include "gui/reusable/discoverfeedsbutton.h"
 #include "gui/reusable/locationlineedit.h"
 #include "gui/reusable/searchtextwidget.h"
 #include "gui/tabwidget.h"
 #include "gui/webviewers/webviewer.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
+#include "miscellaneous/settings.h"
+#include "network-web/articleparse.h"
 #include "network-web/networkfactory.h"
 #include "network-web/readability.h"
 #include "network-web/webfactory.h"
-#include "services/abstract/serviceroot.h"
 
+#include <QJsonObject>
 #include <QKeyEvent>
+#include <QProgressBar>
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolBar>
@@ -27,13 +29,20 @@
 WebBrowser::WebBrowser(WebViewer* viewer, QWidget* parent)
   : TabContent(parent), m_layout(new QVBoxLayout(this)), m_toolBar(new QToolBar(tr("Navigation panel"), this)),
     m_webView(viewer), m_searchWidget(new SearchTextWidget(this)), m_txtLocation(new LocationLineEdit(this)),
-    m_btnDiscoverFeeds(new DiscoverFeedsButton(this)),
     m_actionOpenInSystemBrowser(new QAction(qApp->icons()->fromTheme(QSL("document-open")),
                                             tr("Open this website in system web browser"),
                                             this)),
+#if defined(ENABLE_MEDIAPLAYER)
+    m_actionPlayPageInMediaPlayer(new QAction(qApp->icons()->fromTheme(QSL("player_play"), QSL("media-playback-start")),
+                                              tr("Play in media player"),
+                                              this)),
+#endif
     m_actionReadabilePage(new QAction(qApp->icons()->fromTheme(QSL("text-html")),
                                       tr("View website in reader mode"),
-                                      this)) {
+                                      this)),
+    m_actionGetFullArticle(new QAction(qApp->icons()->fromTheme(QSL("applications-office")),
+                                       tr("Load full source article"),
+                                       this)) {
   if (m_webView == nullptr) {
     m_webView = qApp->createWebView();
     dynamic_cast<QWidget*>(m_webView)->setParent(this);
@@ -83,6 +92,11 @@ void WebBrowser::createConnections() {
 
   connect(m_actionOpenInSystemBrowser, &QAction::triggered, this, &WebBrowser::openCurrentSiteInSystemBrowser);
   connect(m_actionReadabilePage, &QAction::triggered, this, &WebBrowser::readabilePage);
+  connect(m_actionGetFullArticle, &QAction::triggered, this, &WebBrowser::getFullArticle);
+
+#if defined(ENABLE_MEDIAPLAYER)
+  connect(m_actionPlayPageInMediaPlayer, &QAction::triggered, this, &WebBrowser::playCurrentSiteInMediaPlayer);
+#endif
 
   connect(m_txtLocation,
           &LocationLineEdit::submitted,
@@ -91,6 +105,9 @@ void WebBrowser::createConnections() {
 
   connect(qApp->web()->readability(), &Readability::htmlReadabled, this, &WebBrowser::setReadabledHtml);
   connect(qApp->web()->readability(), &Readability::errorOnHtmlReadabiliting, this, &WebBrowser::readabilityFailed);
+
+  connect(qApp->web()->articleParse(), &ArticleParse::articleParsed, this, &WebBrowser::setFullArticleHtml);
+  connect(qApp->web()->articleParse(), &ArticleParse::errorOnArticleParsing, this, &WebBrowser::fullArticleFailed);
 }
 
 void WebBrowser::updateUrl(const QUrl& url) {
@@ -134,6 +151,12 @@ void WebBrowser::onZoomFactorChanged() {
   qApp->settings()->setValue(GROUP(Messages), Messages::Zoom, fact);
 }
 
+#if defined(ENABLE_MEDIAPLAYER)
+void WebBrowser::playCurrentSiteInMediaPlayer() {
+  qApp->mainForm()->tabWidget()->addMediaPlayer(m_webView->url().toString(), true);
+}
+#endif
+
 void WebBrowser::clear(bool also_hide) {
   m_webView->clear();
   m_messages.clear();
@@ -165,7 +188,24 @@ void WebBrowser::loadMessages(const QList<Message>& messages, RootItem* root) {
 
 void WebBrowser::readabilePage() {
   m_actionReadabilePage->setEnabled(false);
-  qApp->web()->readability()->makeHtmlReadable(m_webView->html(), m_webView->url().toString());
+  qApp->web()->readability()->makeHtmlReadable(this, m_webView->html(), m_webView->url().toString());
+}
+
+void WebBrowser::getFullArticle() {
+  QString url;
+
+  if (!m_messages.isEmpty() && !m_messages.first().m_url.isEmpty()) {
+    url = m_messages.first().m_url;
+  }
+  else if (m_webView->url().isValid()) {
+    url = m_webView->url().toString();
+  }
+  else {
+    return;
+  }
+
+  m_actionGetFullArticle->setEnabled(false);
+  qApp->web()->articleParse()->parseArticle(this, url);
 }
 
 bool WebBrowser::eventFilter(QObject* watched, QEvent* event) {
@@ -175,7 +215,7 @@ bool WebBrowser::eventFilter(QObject* watched, QEvent* event) {
     QWheelEvent* wh_event = static_cast<QWheelEvent*>(event);
 
     // Zoom with mouse.
-    if ((wh_event->modifiers() & Qt::KeyboardModifier::ControlModifier) > 0) {
+    if (Globals::hasFlag(wh_event->modifiers(), Qt::KeyboardModifier::ControlModifier)) {
       if (wh_event->angleDelta().y() > 0 && m_webView->canZoomIn()) {
         m_webView->zoomIn();
         onZoomFactorChanged();
@@ -266,19 +306,89 @@ void WebBrowser::newWindowRequested(WebViewer* viewer) {
   qApp->mainForm()->tabWidget()->addBrowser(false, false, browser);
 }
 
-void WebBrowser::setReadabledHtml(const QString& better_html) {
-  if (!better_html.isEmpty()) {
-    m_webView->setHtml(better_html, m_webView->url());
+void WebBrowser::setReadabledHtml(const QObject* sndr, const QString& better_html) {
+  if (sndr == this && !better_html.isEmpty()) {
+    m_webView->setReadabledHtml(better_html, m_webView->url());
   }
 }
 
-void WebBrowser::readabilityFailed(const QString& error) {
-  MsgBox::show({},
-               QMessageBox::Icon::Critical,
-               tr("Reader mode failed for this website"),
-               tr("Reader mode cannot be applied to current page."),
-               {},
-               error);
+void WebBrowser::readabilityFailed(const QObject* sndr, const QString& error) {
+  if (sndr == this && !error.isEmpty()) {
+    m_webView->setReadabledHtml(error, m_webView->url());
+  }
+}
+
+Message WebBrowser::messageFromExtractor(const QJsonDocument& extracted_data) const {
+  QJsonObject extracted_obj = extracted_data.object();
+  Message msg;
+
+  msg.m_title = extracted_obj["title"].toString();
+  msg.m_author = extracted_obj["author"].toString();
+  msg.m_created = TextFactory::parseDateTime(extracted_obj["published"].toString());
+  msg.m_createdFromFeed = true;
+  msg.m_url = extracted_obj["url"].toString();
+  msg.m_contents = extracted_obj["content"].toString();
+
+  QString image = extracted_obj["image"].toString();
+
+  if (!image.isEmpty()) {
+    // NOTE: Prepend image to content.
+    msg.m_contents = msg.m_contents.prepend(QSL("<div>"
+                                                "<a href=\"%1\">"
+                                                "<img src=\"%1\" />"
+                                                "</a>"
+                                                "</div>")
+                                              .arg(image));
+  }
+
+  return msg;
+}
+
+void WebBrowser::setFullArticleHtml(const QObject* sndr, const QString& url, const QString& json_answer) {
+  if (sndr == this && !json_answer.isEmpty()) {
+    QJsonDocument json_doc = QJsonDocument::fromJson(json_answer.toUtf8());
+
+    Message full_article = messageFromExtractor(json_doc);
+
+    if (!m_messages.isEmpty() && m_messages.first().m_url == url) {
+      const Message displayed_article = m_messages.first();
+
+      // Copy rest of original attributes which might influence the "full" article.
+      full_article.m_feedId = displayed_article.m_feedId;
+      full_article.m_feedTitle = displayed_article.m_feedTitle;
+      full_article.m_customId = displayed_article.m_customId;
+      full_article.m_customHash = displayed_article.m_customHash;
+      full_article.m_id = displayed_article.m_id;
+      full_article.m_accountId = displayed_article.m_accountId;
+      full_article.m_assignedLabels = displayed_article.m_assignedLabels;
+      full_article.m_assignedLabelsIds = displayed_article.m_assignedLabelsIds;
+      full_article.m_categories = displayed_article.m_categories;
+      full_article.m_rawContents = displayed_article.m_rawContents;
+
+      full_article.m_isRead = displayed_article.m_isRead;
+      full_article.m_isImportant = displayed_article.m_isImportant;
+      full_article.m_isDeleted = displayed_article.m_isDeleted;
+      full_article.m_score = displayed_article.m_score;
+      full_article.m_isRtl = displayed_article.m_isRtl;
+      full_article.m_enclosures = displayed_article.m_enclosures;
+
+      loadMessages({full_article}, m_root);
+    }
+    else {
+      auto html_message = m_webView->htmlForMessages({full_article}, nullptr);
+
+      setHtml(html_message.m_html, url);
+    }
+
+    //
+    //  m_webView->setReadabledHtml(full_article.m_contents, m_webView->url());
+  }
+}
+
+void WebBrowser::fullArticleFailed(const QObject* sndr, const QString& error) {
+  if (sndr == this && !error.isEmpty()) {
+    m_webView->setReadabledHtml(error, m_webView->url());
+  }
 }
 
 void WebBrowser::initializeLayout() {
@@ -287,34 +397,44 @@ void WebBrowser::initializeLayout() {
   m_toolBar->setAllowedAreas(Qt::ToolBarArea::TopToolBarArea);
 
   // Modify action texts.
-  m_actionBack->setText(tr("Back"));
-  m_actionForward->setText(tr("Forward"));
-  m_actionReload->setText(tr("Reload"));
-  m_actionStop->setText(tr("Stop"));
+  if (m_actionBack != nullptr) {
+    m_actionBack->setText(tr("Back"));
+    m_actionBack->setIcon(qApp->icons()->fromTheme(QSL("go-previous")));
+    m_toolBar->addAction(m_actionBack);
+  }
 
-  m_actionBack->setIcon(qApp->icons()->fromTheme(QSL("go-previous")));
-  m_actionForward->setIcon(qApp->icons()->fromTheme(QSL("go-next")));
-  m_actionReload->setIcon(qApp->icons()->fromTheme(QSL("reload"), QSL("view-refresh")));
-  m_actionStop->setIcon(qApp->icons()->fromTheme(QSL("process-stop")));
+  if (m_actionForward != nullptr) {
+    m_actionForward->setText(tr("Forward"));
+    m_actionForward->setIcon(qApp->icons()->fromTheme(QSL("go-next")));
+    m_toolBar->addAction(m_actionForward);
+  }
 
-  m_btnDiscoverFeedsAction = new QWidgetAction(this);
+  if (m_actionReload != nullptr) {
+    m_actionReload->setText(tr("Reload"));
+    m_actionReload->setIcon(qApp->icons()->fromTheme(QSL("reload"), QSL("view-refresh")));
+    m_toolBar->addAction(m_actionReload);
+  }
+
+  if (m_actionStop != nullptr) {
+    m_actionStop->setText(tr("Stop"));
+    m_actionStop->setIcon(qApp->icons()->fromTheme(QSL("process-stop")));
+    m_toolBar->addAction(m_actionStop);
+  }
 
   m_actionOpenInSystemBrowser->setEnabled(false);
   m_actionReadabilePage->setEnabled(false);
-
-  // m_btnDiscoverFeedsAction->setDefaultWidget(new QWidget(this));
-
-  m_btnDiscoverFeedsAction->setDefaultWidget(m_btnDiscoverFeeds);
+  m_actionGetFullArticle->setEnabled(false);
 
   // Add needed actions into toolbar.
-  m_toolBar->addAction(m_actionBack);
-  m_toolBar->addAction(m_actionForward);
-  m_toolBar->addAction(m_actionReload);
-  m_toolBar->addAction(m_actionStop);
   m_toolBar->addAction(m_actionOpenInSystemBrowser);
+  m_toolBar->addAction(m_actionGetFullArticle);
   m_toolBar->addAction(m_actionReadabilePage);
 
-  m_toolBar->addAction(m_btnDiscoverFeedsAction);
+#if defined(ENABLE_MEDIAPLAYER)
+  m_actionPlayPageInMediaPlayer->setEnabled(false);
+  m_toolBar->addAction(m_actionPlayPageInMediaPlayer);
+#endif
+
   m_txtLocationAction = m_toolBar->addWidget(m_txtLocation);
 
   m_loadingProgress = new QProgressBar(this);
@@ -336,10 +456,14 @@ void WebBrowser::initializeLayout() {
 }
 
 void WebBrowser::onLoadingStarted() {
-  m_btnDiscoverFeeds->clearFeedAddresses();
   m_loadingProgress->show();
   m_actionOpenInSystemBrowser->setEnabled(false);
   m_actionReadabilePage->setEnabled(false);
+  m_actionGetFullArticle->setEnabled(false);
+
+#if defined(ENABLE_MEDIAPLAYER)
+  m_actionPlayPageInMediaPlayer->setEnabled(false);
+#endif
 }
 
 void WebBrowser::onLoadingProgress(int progress) {
@@ -353,21 +477,22 @@ void WebBrowser::onLoadingFinished(bool success) {
 
     if (url.isValid() && !url.host().isEmpty()) {
       m_actionOpenInSystemBrowser->setEnabled(true);
+      m_actionGetFullArticle->setEnabled(true);
       m_actionReadabilePage->setEnabled(true);
+
+#if defined(ENABLE_MEDIAPLAYER)
+      m_actionPlayPageInMediaPlayer->setEnabled(true);
+#endif
     }
     else {
       m_actionOpenInSystemBrowser->setEnabled(false);
       m_actionReadabilePage->setEnabled(false);
-    }
+      m_actionGetFullArticle->setEnabled(false);
 
-    // TODO: nevolat toto u internich "rssguard" adres
-    // Let's check if there are any feeds defined on the web and eventually
-    // display "Add feeds" button.
-    m_btnDiscoverFeeds->setFeedAddresses(NetworkFactory::extractFeedLinksFromHtmlPage(m_webView->url(),
-                                                                                      m_webView->html()));
-  }
-  else {
-    m_btnDiscoverFeeds->clearFeedAddresses();
+#if defined(ENABLE_MEDIAPLAYER)
+      m_actionPlayPageInMediaPlayer->setEnabled(false);
+#endif
+    }
   }
 
   m_loadingProgress->hide();

@@ -1,9 +1,5 @@
 // For license of this file, see <project-root-folder>/LICENSE.md.
 
-#include <QDateTime>
-#include <QJSEngine>
-#include <QProcess>
-
 #include "gui/dialogs/formmessagefiltersmanager.h"
 
 #include "3rd-party/boolinq/boolinq.h"
@@ -13,13 +9,17 @@
 #include "exceptions/filteringexception.h"
 #include "gui/guiutilities.h"
 #include "gui/messagebox.h"
+#include "gui/reusable/jssyntaxhighlighter.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/feedreader.h"
 #include "miscellaneous/iconfactory.h"
 #include "network-web/webfactory.h"
 #include "services/abstract/accountcheckmodel.h"
 #include "services/abstract/feed.h"
-#include "services/abstract/labelsnode.h"
+
+#include <QDateTime>
+#include <QJSEngine>
+#include <QProcess>
 
 FormMessageFiltersManager::FormMessageFiltersManager(FeedReader* reader,
                                                      const QList<ServiceRoot*>& accounts,
@@ -27,6 +27,8 @@ FormMessageFiltersManager::FormMessageFiltersManager(FeedReader* reader,
   : QDialog(parent), m_feedsModel(new AccountCheckSortedModel(this)), m_rootItem(new RootItem()), m_accounts(accounts),
     m_reader(reader), m_loadingFilter(false), m_msgModel(new MessagesForFiltersModel(this)) {
   m_ui.setupUi(this);
+
+  m_highlighter = new JsSyntaxHighlighter(m_ui.m_txtScript->document());
 
   std::sort(m_accounts.begin(), m_accounts.end(), [](const ServiceRoot* lhs, const ServiceRoot* rhs) {
     return lhs->title().compare(rhs->title(), Qt::CaseSensitivity::CaseInsensitive) < 0;
@@ -219,7 +221,7 @@ void FormMessageFiltersManager::removeSelectedFilter() {
 void FormMessageFiltersManager::loadFilters() {
   auto flt = m_reader->messageFilters();
 
-  for (auto* fltr : qAsConst(flt)) {
+  for (auto* fltr : std::as_const(flt)) {
     auto* it = new QListWidgetItem(fltr->name(), m_ui.m_listFilters);
 
     it->setData(Qt::ItemDataRole::UserRole, QVariant::fromValue<MessageFilter*>(fltr));
@@ -419,7 +421,7 @@ void FormMessageFiltersManager::processCheckedFeeds() {
         }
 
         // Process changed labels.
-        for (Label* lbl : qAsConst(msg_backup.m_assignedLabels)) {
+        for (Label* lbl : std::as_const(msg_backup.m_assignedLabels)) {
           if (!msg->m_assignedLabels.contains(lbl)) {
             // Label is not there anymore, it was deassigned.
             lbl->deassignFromMessage(*msg);
@@ -429,7 +431,7 @@ void FormMessageFiltersManager::processCheckedFeeds() {
           }
         }
 
-        for (Label* lbl : qAsConst(msg->m_assignedLabels)) {
+        for (Label* lbl : std::as_const(msg->m_assignedLabels)) {
           if (!msg_backup.m_assignedLabels.contains(lbl)) {
             // Label is in new message, but is not in old message, it
             // was newly assigned.
@@ -502,7 +504,7 @@ void FormMessageFiltersManager::loadFilterFeedAssignments(MessageFilter* filter,
   m_loadingFilter = true;
   auto stf = account->getSubTreeFeeds();
 
-  for (auto* feed : qAsConst(stf)) {
+  for (auto* feed : std::as_const(stf)) {
     if (feed->messageFilters().contains(filter)) {
       m_feedsModel->sourceModel()->setItemChecked(feed, Qt::CheckState::Checked);
     }
@@ -576,7 +578,7 @@ void FormMessageFiltersManager::showFilter(MessageFilter* filter) {
 }
 
 void FormMessageFiltersManager::loadAccounts() {
-  for (auto* acc : qAsConst(m_accounts)) {
+  for (auto* acc : std::as_const(m_accounts)) {
     m_ui.m_cmbAccounts->addItem(acc->icon(), acc->title(), QVariant::fromValue(acc));
   }
 }
@@ -588,8 +590,7 @@ void FormMessageFiltersManager::beautifyScript() {
   proc_clang_format.setArguments({"--assume-filename=script.js", "--style=Chromium"});
 
 #if defined(Q_OS_WIN)
-  proc_clang_format.setProgram(qApp->applicationDirPath() + QDir::separator() + QSL("clang-format") +
-                               QDir::separator() + QSL("clang-format.exe"));
+  proc_clang_format.setProgram(qApp->applicationDirPath() + QDir::separator() + QSL("clang-format.exe"));
 #else
   proc_clang_format.setProgram(QSL("clang-format"));
 #endif

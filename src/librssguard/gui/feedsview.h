@@ -3,12 +3,12 @@
 #ifndef FEEDSVIEW_H
 #define FEEDSVIEW_H
 
-#include "gui/reusable/basetreeview.h"
-
 #include "core/feedsmodel.h"
+#include "gui/reusable/basetreeview.h"
 #include "gui/toolbars/feedstoolbar.h"
 
 #include <QStyledItemDelegate>
+#include <QTimer>
 
 class FeedsProxyModel;
 class Feed;
@@ -30,11 +30,13 @@ class RSSGUARD_DLLSPEC FeedsView : public BaseTreeView {
 
     // Returns list of selected/all feeds.
     // NOTE: This is recursive method which returns all descendants.
-    QList<Feed*> selectedFeeds() const;
+    QList<Feed*> selectedFeeds(bool recursive) const;
 
-    // Returns pointers to selected feed/category if they are really
-    // selected.
+    // Returns selected item. If multiple items are selected, returns
+    // the one of them which is also "current". If none of them is
+    // "current", returns firs item of selected ones.
     RootItem* selectedItem() const;
+    QList<RootItem*> selectedItems() const;
 
     // Saves/loads expand states of all nodes (feeds/categories) of the list to/from settings.
     void saveAllExpandStates();
@@ -56,15 +58,15 @@ class RSSGUARD_DLLSPEC FeedsView : public BaseTreeView {
     void markSelectedItemUnread();
     void markAllItemsRead();
 
-    // Newspaper accessors.
-    void openSelectedItemsInNewspaperMode();
-
     // Feed clearers.
-    void clearSelectedFeeds();
-    void clearAllFeeds();
+    void clearSelectedItems();
+    void clearAllItems();
 
     // Base manipulators.
-    void editSelectedItem();
+    void editItems(const QList<RootItem*>& items);
+    void editSelectedItems();
+    void editChildFeeds();
+    void editRecursiveFeeds();
     void deleteSelectedItem();
 
     // Sort order manipulations.
@@ -93,7 +95,6 @@ class RSSGUARD_DLLSPEC FeedsView : public BaseTreeView {
   signals:
     void itemSelected(RootItem* item);
     void requestViewNextUnreadMessage();
-    void openMessagesInNewspaperView(RootItem* root, const QList<Message>& messages);
 
   protected:
     void drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const;
@@ -107,7 +108,8 @@ class RSSGUARD_DLLSPEC FeedsView : public BaseTreeView {
     void onIndexExpanded(const QModelIndex& idx);
     void onIndexCollapsed(const QModelIndex& idx);
 
-    void expandItemDelayed(const QModelIndex& source_idx);
+    void reloadDelayedExpansions();
+    void reloadItemExpandState(const QModelIndex& source_idx);
     void markSelectedItemReadStatus(RootItem::ReadStatus read);
     void markAllItemsReadStatus(RootItem::ReadStatus read);
 
@@ -146,6 +148,8 @@ class RSSGUARD_DLLSPEC FeedsView : public BaseTreeView {
     FeedsModel* m_sourceModel;
     FeedsProxyModel* m_proxyModel;
     bool m_dontSaveExpandState;
+    QList<QPair<QModelIndex, bool>> m_delayedItemExpansions;
+    QTimer m_expansionDelayer;
 
     // QTreeView interface
   protected:

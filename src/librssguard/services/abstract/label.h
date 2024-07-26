@@ -28,14 +28,10 @@ class RSSGUARD_DLLSPEC Label : public RootItem {
     virtual int countOfAllMessages() const;
     virtual int countOfUnreadMessages() const;
     virtual bool canBeEdited() const;
-    virtual bool editViaGui();
     virtual bool canBeDeleted() const;
-    virtual bool deleteViaGui();
+    virtual bool deleteItem();
     virtual void updateCounts(bool including_total_count);
     virtual QList<Message> undeletedMessages() const;
-
-  public:
-    static QIcon generateIcon(const QColor& color);
 
   public slots:
     void assignToMessage(const Message& msg, bool reload_model = true);

@@ -9,20 +9,29 @@
 
 FormAddEditProbe::FormAddEditProbe(QWidget* parent) : QDialog(parent), m_editableProbe(nullptr) {
   m_ui.setupUi(this);
-  m_ui.m_txtName->lineEdit()->setPlaceholderText(tr("Name for your probe"));
+  m_ui.m_txtName->lineEdit()->setPlaceholderText(tr("Name for your query"));
   m_ui.m_txtFilter->lineEdit()->setPlaceholderText(tr("Regular expression"));
+
+  m_ui.m_help->setHelpText(
+    tr("What is regular expression?"),
+    tr(
+      "A regular expression (shortened as regex or regexp) is a sequence of characters that "
+      R"(specifies a match pattern in text. See more <a href="https://learn.microsoft.com/en-us/dotnet/standard/base-types/regular-expression-language-quick-reference">info</a>.)"),
+    false,
+    true);
 
   connect(m_ui.m_txtName->lineEdit(), &QLineEdit::textChanged, this, [this](const QString& text) {
     if (text.isEmpty()) {
-      m_ui.m_txtName->setStatus(LineEditWithStatus::StatusType::Error, tr("Label's name cannot be empty."));
+      m_ui.m_txtName->setStatus(LineEditWithStatus::StatusType::Error, tr("Regex query name cannot be empty."));
     }
     else {
       m_ui.m_txtName->setStatus(LineEditWithStatus::StatusType::Ok, tr("Perfect!"));
     }
   });
+
   connect(m_ui.m_txtFilter->lineEdit(), &QLineEdit::textChanged, this, [this](const QString& text) {
     if (text.isEmpty()) {
-      m_ui.m_txtFilter->setStatus(LineEditWithStatus::StatusType::Error, tr("Probe name cannot be empty."));
+      m_ui.m_txtFilter->setStatus(LineEditWithStatus::StatusType::Error, tr("Regular expression cannot be empty."));
     }
     else if (!QRegularExpression(text).isValid()) {
       m_ui.m_txtFilter->setStatus(LineEditWithStatus::StatusType::Error, tr("Regular expression is not well-formed."));
@@ -37,7 +46,7 @@ FormAddEditProbe::FormAddEditProbe(QWidget* parent) : QDialog(parent), m_editabl
 }
 
 Search* FormAddEditProbe::execForAdd() {
-  GuiUtilities::applyDialogProperties(*this, qApp->icons()->fromTheme(QSL("tag-new")), tr("Create new probe"));
+  GuiUtilities::applyDialogProperties(*this, qApp->icons()->fromTheme(QSL("tag-new")), tr("Create new regex query"));
 
   m_ui.m_btnColor->setRandomColor();
   m_ui.m_txtName->lineEdit()->setText(tr("Hot stuff"));
@@ -58,7 +67,7 @@ Search* FormAddEditProbe::execForAdd() {
 bool FormAddEditProbe::execForEdit(Search* prb) {
   GuiUtilities::applyDialogProperties(*this,
                                       qApp->icons()->fromTheme(QSL("tag-properties")),
-                                      tr("Edit probe '%1'").arg(prb->title()));
+                                      tr("Edit regex query '%1'").arg(prb->title()));
 
   m_editableProbe = prb;
 

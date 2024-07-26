@@ -7,8 +7,8 @@
 #include "gui/dialogs/formmain.h"
 #include "gui/dialogs/formupdate.h"
 #include "miscellaneous/application.h"
+#include "miscellaneous/settings.h"
 #include "miscellaneous/systemfactory.h"
-#include "network-web/networkfactory.h"
 
 #if defined(Q_OS_WIN)
 #include <QSettings>
@@ -272,7 +272,7 @@ void SystemFactory::checkForUpdatesOnStartup() {
                                                }});
                        }
                      });
-    qApp->system()->checkForUpdates();
+    checkForUpdates();
   }
 #endif
 }

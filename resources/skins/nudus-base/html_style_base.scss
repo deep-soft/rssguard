@@ -48,6 +48,7 @@ body {
     -webkit-font-feature-settings: "kern" 1;
     font-feature-settings: "kern" 1;
     font-kerning: normal;
+    padding: 10px !important;
     min-height: 100vh;
 }
 
@@ -293,7 +294,7 @@ ol {
 
 img {
     // Let the width be defined (see .rssguard-mbody img), but keep aspect ratio
-    height: auto;
+    //height: auto;
     // `width auto` creates many problems even if set as a fallback
     //width: auto;
 }
@@ -354,7 +355,7 @@ summary {
 
 // m* == message*
 .rssguard-mwrapper {
-    padding: $base-unit !important;
+    padding: 0px !important;
 
     .rssguard-mhead {
 
@@ -391,12 +392,12 @@ summary {
         }
     }
 
-    .rssguard-mbody img {
+    img, video {
         // Needs to be `!important` when max-width is defined by image style
         // <img src="https://....png" alt="alt" style="max-width: 100%;">
-        max-width: 450px !important;
+        //max-width: 450px !important;
         // For cases when they both are set
-        max-height: unset !important;
+        //max-height: unset !important;
 
         @media only screen and (max-width: 800px) {
             // `!important` to override `!important` that is set above

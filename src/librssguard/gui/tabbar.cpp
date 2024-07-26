@@ -3,9 +3,9 @@
 #include "gui/tabbar.h"
 
 #include "definitions/definitions.h"
+#include "definitions/globals.h"
 #include "gui/reusable/plaintoolbutton.h"
 #include "miscellaneous/settings.h"
-#include "miscellaneous/templates.h"
 
 #include <QMouseEvent>
 #include <QStyle>
@@ -21,9 +21,8 @@ TabBar::~TabBar() {
 }
 
 void TabBar::setTabType(int index, TabBar::TabType type) {
-  const auto button_position = static_cast<ButtonPosition>(style()->styleHint(QStyle::StyleHint::SH_TabBar_CloseButtonPosition,
-                                                                              nullptr,
-                                                                              this));
+  const auto button_position =
+    static_cast<ButtonPosition>(style()->styleHint(QStyle::StyleHint::SH_TabBar_CloseButtonPosition, nullptr, this));
 
   switch (type) {
     case TabBar::TabType::DownloadManager:
@@ -51,9 +50,8 @@ void TabBar::setTabType(int index, TabBar::TabType type) {
 
 void TabBar::closeTabViaButton() {
   const auto* close_button = qobject_cast<QAbstractButton*>(sender());
-  const auto button_position = static_cast<ButtonPosition>(style()->styleHint(QStyle::StyleHint::SH_TabBar_CloseButtonPosition,
-                                                                              nullptr,
-                                                                              this));
+  const auto button_position =
+    static_cast<ButtonPosition>(style()->styleHint(QStyle::StyleHint::SH_TabBar_CloseButtonPosition, nullptr, this));
 
   if (close_button != nullptr) {
     // Find index of tab for this close button.
@@ -75,15 +73,11 @@ void TabBar::wheelEvent(QWheelEvent* event) {
   if (number_of_tabs > 1) {
     if (event->angleDelta().y() > 0) {
       // Scroll to the LEFT tab.
-      setCurrentIndex(current_index == 0
-                      ? number_of_tabs - 1
-                      : current_index - 1);
+      setCurrentIndex(current_index == 0 ? number_of_tabs - 1 : current_index - 1);
     }
     else if (event->angleDelta().y() < 0) {
       // Scroll to the RIGHT tab.
-      setCurrentIndex(current_index == number_of_tabs - 1
-                      ? 0
-                      : current_index + 1);
+      setCurrentIndex(current_index == number_of_tabs - 1 ? 0 : current_index + 1);
     }
   }
 }
@@ -98,7 +92,7 @@ void TabBar::mousePressEvent(QMouseEvent* event) {
     // Check if user clicked tab with middle button.
     // NOTE: This needs to be done here because
     // destination does not know the original event.
-    if ((event->button() & Qt::MiddleButton) == Qt::MiddleButton &&
+    if (Globals::hasFlag(event->button(), Qt::MouseButton::MiddleButton) &&
         qApp->settings()->value(GROUP(GUI), SETTING(GUI::TabCloseMiddleClick)).toBool()) {
       if (tabType(tab_index) == TabBar::TabType::Closable || tabType(tab_index) == TabBar::TabType::DownloadManager) {
         // This tab is closable, so we can close it.
@@ -117,7 +111,7 @@ void TabBar::mouseDoubleClickEvent(QMouseEvent* event) {
     // Check if user clicked tab with middle button.
     // NOTE: This needs to be done here because
     // destination does not know the original event.
-    if ((event->button() & Qt::LeftButton) == Qt::LeftButton &&
+    if (Globals::hasFlag(event->button(), Qt::MouseButton::LeftButton) &&
         qApp->settings()->value(GROUP(GUI), SETTING(GUI::TabCloseDoubleClick)).toBool()) {
       if (int(tabType(tab_index) & (TabBar::TabType::Closable | TabBar::TabType::DownloadManager)) > 0) {
         // This tab is closable, so we can close it.

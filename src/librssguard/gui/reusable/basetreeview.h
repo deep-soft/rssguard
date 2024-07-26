@@ -5,11 +5,13 @@
 
 #include <QTreeView>
 
-class BaseTreeView : public QTreeView {
-  Q_OBJECT
+class RSSGUARD_DLLSPEC BaseTreeView : public QTreeView {
+    Q_OBJECT
 
   public:
     explicit BaseTreeView(QWidget* parent = nullptr);
+
+    bool isIndexHidden(const QModelIndex& idx) const;
 
   protected:
     virtual void keyPressEvent(QKeyEvent* event);

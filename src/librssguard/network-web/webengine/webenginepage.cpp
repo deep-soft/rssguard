@@ -5,14 +5,14 @@
 #include "definitions/definitions.h"
 #include "gui/webviewers/webengine/webengineviewer.h"
 #include "miscellaneous/application.h"
+#include "miscellaneous/settings.h"
 #include "network-web/adblock/adblockmanager.h"
 #include "network-web/adblock/adblockrequestinfo.h"
 #include "network-web/webfactory.h"
-#include "services/abstract/rootitem.h"
-#include "services/abstract/serviceroot.h"
 
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QWebEngineScript>
@@ -29,6 +29,31 @@ WebEngineViewer* WebEnginePage::view() const {
 #else
   return qobject_cast<WebEngineViewer*>(QWebEnginePage::view());
 #endif
+}
+
+QString WebEnginePage::pageHtml(const QString& url) {
+  QEventLoop loop;
+  QString html;
+
+  // Load initial DOM/page.
+  connect(this, &WebEnginePage::loadFinished, &loop, &QEventLoop::quit);
+  connect(this, &WebEnginePage::domIsIdle, &loop, &QEventLoop::quit);
+
+  load(url);
+  loop.exec();
+
+  // Page is loaded. Send artificial scroll-to-bottom and wait for changes to end.
+  // runJavaScript("window.resizeTo(3800, 2100);");
+  runJavaScript(IOFactory::readFile(BUILTIN_JS_FOLDER + QL1C('/') + OBSERVER_JS_FILE));
+  loop.exec();
+
+  toHtml([&](const QString& htm) {
+    html = htm;
+    loop.exit();
+  });
+  loop.exec();
+
+  return html;
 }
 
 void WebEnginePage::hideUnwantedElements() {
@@ -78,4 +103,8 @@ void WebEnginePage::javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level
   Q_UNUSED(level)
 
   qWarningNN << LOGSEC_JS << message << QSL(" (source: %1:%2)").arg(source_id, QString::number(line_number));
+
+  if (message.contains(QSL("iiddllee"))) {
+    emit domIsIdle();
+  }
 }

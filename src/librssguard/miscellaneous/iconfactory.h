@@ -3,22 +3,24 @@
 #ifndef ICONFACTORY_H
 #define ICONFACTORY_H
 
-#include <QObject>
-
 #include "definitions/definitions.h"
 #include "miscellaneous/application.h"
 
 #include <QDir>
 #include <QHash>
 #include <QIcon>
+#include <QObject>
 #include <QString>
 
 class RSSGUARD_DLLSPEC IconFactory : public QObject {
-  Q_OBJECT
+    Q_OBJECT
 
   public:
     explicit IconFactory(QObject* parent = nullptr);
     virtual ~IconFactory();
+
+    // Generates round icon of given color.
+    static QIcon generateIcon(const QColor& color);
 
     // Used to store/retrieve QIcons from/to Base64-encoded
     // byte array.
@@ -49,9 +51,5 @@ class RSSGUARD_DLLSPEC IconFactory : public QObject {
     // Sets icon theme with given name as the active one and loads it.
     void setCurrentIconTheme(const QString& theme_name);
 };
-
-inline QString IconFactory::currentIconTheme() const {
-  return QIcon::themeName();
-}
 
 #endif // ICONFACTORY_H

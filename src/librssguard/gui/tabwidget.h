@@ -3,12 +3,11 @@
 #ifndef TABWIDGET_H
 #define TABWIDGET_H
 
-#include <QTabWidget>
-
 #include "core/message.h"
 #include "gui/tabbar.h"
 #include "gui/tabcontent.h"
 
+#include <QTabWidget>
 #include <QUrl>
 
 class QMenu;
@@ -61,11 +60,12 @@ class TabWidget : public QTabWidget {
     void scrollDownCurrentBrowser();
 
     // Called when number of tab pages changes.
-    void checkTabBarVisibility();
+    void checkCornerButtonVisibility();
+    void updateAppearance();
 
     // Tab closing.
     bool closeTab(int index);
-    void closeBrowserTab();
+    void closeTabWithSender();
     void closeAllTabsExceptCurrent();
     void closeAllTabs();
     void closeCurrentTab();
@@ -73,10 +73,14 @@ class TabWidget : public QTabWidget {
     // Displays download manager.
     void showDownloadManager();
 
-    int addNewspaperView(RootItem* root, const QList<Message>& messages);
+    int addSingleMessageView(RootItem* root, const Message& message);
 
     // Adds new WebBrowser tab to global TabWidget.
     int addEmptyBrowser();
+
+#if defined(ENABLE_MEDIAPLAYER)
+    int addMediaPlayer(const QString& url, bool make_active);
+#endif
 
     // Adds new WebBrowser with link. This is used when user
     // selects to "Open link in new tab.".

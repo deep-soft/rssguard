@@ -3,8 +3,8 @@
 #ifndef NETWORKFACTORY_H
 #define NETWORKFACTORY_H
 
+#include "definitions/typedefs.h"
 #include "network-web/httpresponse.h"
-
 #include "services/abstract/feed.h"
 
 #include <QCoreApplication>
@@ -15,12 +15,12 @@
 #include <QPair>
 #include <QVariant>
 
-struct NetworkResult {
+struct RSSGUARD_DLLSPEC NetworkResult {
     QNetworkReply::NetworkError m_networkError;
     int m_httpCode;
     QString m_contentType;
     QList<QNetworkCookie> m_cookies;
-    QList<QNetworkReply::RawHeaderPair> m_headers;
+    QMap<QString, QString> m_headers;
 
     explicit NetworkResult();
     explicit NetworkResult(QNetworkReply::NetworkError err,
@@ -31,14 +31,18 @@ struct NetworkResult {
 
 class Downloader;
 
-class NetworkFactory {
+class RSSGUARD_DLLSPEC NetworkFactory {
     Q_DECLARE_TR_FUNCTIONS(NetworkFactory)
 
   private:
     explicit NetworkFactory() = default;
 
   public:
-    enum class NetworkAuthentication { NoAuthentication = 0, Basic = 1, Token = 2 };
+    enum class NetworkAuthentication {
+      NoAuthentication = 0,
+      Basic = 1,
+      Token = 2
+    };
 
     static QStringList extractFeedLinksFromHtmlPage(const QUrl& url, const QString& html);
     static QPair<QByteArray, QByteArray> generateBasicAuthHeader(NetworkAuthentication protection,
@@ -51,7 +55,7 @@ class NetworkFactory {
 
     // Performs SYNCHRONOUS favicon download for the site,
     // given URL belongs to.
-    static QNetworkReply::NetworkError downloadIcon(const QList<QPair<QString, bool>>& urls,
+    static QNetworkReply::NetworkError downloadIcon(const QList<IconLocation>& urls,
                                                     int timeout,
                                                     QPixmap& output,
                                                     const QList<QPair<QByteArray, QByteArray>>& additional_headers,

@@ -12,7 +12,6 @@
 #include "miscellaneous/localization.h"
 #include "miscellaneous/nodejs.h"
 #include "miscellaneous/notification.h"
-#include "miscellaneous/settings.h"
 #include "miscellaneous/singleapplication.h"
 #include "miscellaneous/skinfactory.h"
 #include "miscellaneous/systemfactory.h"
@@ -44,7 +43,9 @@ class QWebEngineDownloadItem;
 
 class WebFactory;
 class NotificationFactory;
+class ToastNotificationsManager;
 class WebViewer;
+class Settings;
 
 #if defined(Q_OS_WIN)
 struct ITaskbarList4;
@@ -52,13 +53,19 @@ struct ITaskbarList4;
 
 struct GuiMessage {
   public:
-    GuiMessage(QString title, QString message, QSystemTrayIcon::MessageIcon type)
+    GuiMessage() {}
+    GuiMessage(QString title,
+               QString message,
+               QSystemTrayIcon::MessageIcon type = QSystemTrayIcon::MessageIcon::Information)
       : m_title(std::move(title)), m_message(std::move(message)), m_type(type) {}
 
     QString m_title;
     QString m_message;
     QSystemTrayIcon::MessageIcon m_type;
+    FeedDownloadResults m_feedFetchResults;
 };
+
+Q_DECLARE_METATYPE(GuiMessage)
 
 struct GuiMessageDestination {
   public:
@@ -70,6 +77,8 @@ struct GuiMessageDestination {
     bool m_statusBar;
 };
 
+Q_DECLARE_METATYPE(GuiMessageDestination)
+
 struct GuiAction {
   public:
     GuiAction(QString title = {}, const std::function<void()>& action = nullptr)
@@ -78,6 +87,8 @@ struct GuiAction {
     QString m_title;
     std::function<void()> m_action;
 };
+
+Q_DECLARE_METATYPE(GuiAction)
 
 class RSSGUARD_DLLSPEC Application : public SingleApplication {
     Q_OBJECT
@@ -89,7 +100,7 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
     void reactOnForeignNotifications();
     void hideOrShowMainForm();
     void loadDynamicShortcuts();
-    void showPolls() const;
+    void offerPolls() const;
     void offerChanges() const;
 
     bool isAlreadyRunning();
@@ -123,6 +134,8 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
     SystemTrayIcon* trayIcon();
     NotificationFactory* notifications() const;
     NodeJs* nodejs() const;
+    QThreadPool* workHorsePool() const;
+    ToastNotificationsManager* toastNotifications() const;
 
     QIcon desktopAwareIcon() const;
 
@@ -140,8 +153,12 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
     // NOTE: Use this to get correct path under which store user data.
     QString userDataFolder();
 
-    QString replaceDataUserDataFolderPlaceholder(QString text) const;
-    QStringList replaceDataUserDataFolderPlaceholder(QStringList texts) const;
+    QString cacheFolder();
+
+    int customAdblockPort() const;
+
+    QString replaceUserDataFolderPlaceholder(QString text) const;
+    QStringList replaceUserDataFolderPlaceholder(QStringList texts) const;
 
     void setMainForm(FormMain* main_form);
 
@@ -163,14 +180,16 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
     // or in message box if tray icon is disabled.
     void showGuiMessage(Notification::Event event,
                         const GuiMessage& msg,
-                        const GuiMessageDestination& dest = {},
+                        GuiMessageDestination dest = {},
                         const GuiAction& action = {},
                         QWidget* parent = nullptr);
 
     WebViewer* createWebView();
 
-#if defined(USE_WEBENGINE)
-    bool forcedNoWebEngine() const;
+    bool usingLite() const;
+
+#if defined(NO_LITE)
+    bool forcedLite() const;
 #endif
 
     // Returns pointer to "GOD" application singleton.
@@ -178,10 +197,6 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
 
     // Custom debug/console log handler.
     static void performLogging(QtMsgType type, const QMessageLogContext& context, const QString& msg);
-
-    int customAdblockPort() const;
-
-    QThreadPool* workHorsePool() const;
 
   public slots:
     // Restarts the application.
@@ -193,18 +208,29 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
 
     void displayLog();
 
+    void showGuiMessageCore(Notification::Event event,
+                            const GuiMessage& msg,
+                            GuiMessageDestination dest = {},
+                            const GuiAction& action = {},
+                            QWidget* parent = nullptr);
+
   private slots:
+    void loadMessageToFeedAndArticleList(Feed* feed, const Message& message);
     void fillCmdArgumentsParser(QCommandLineParser& parser);
 
-    void onNodeJsPackageUpdateError(const QList<NodeJs::PackageMetadata>& pkgs, const QString& error);
-    void onNodeJsPackageInstalled(const QList<NodeJs::PackageMetadata>& pkgs, bool already_up_to_date);
+    void onNodeJsPackageUpdateError(const QObject* sndr,
+                                    const QList<NodeJs::PackageMetadata>& pkgs,
+                                    const QString& error);
+    void onNodeJsPackageInstalled(const QObject* sndr,
+                                  const QList<NodeJs::PackageMetadata>& pkgs,
+                                  bool already_up_to_date);
     void onCommitData(QSessionManager& manager);
     void onSaveState(QSessionManager& manager);
     void onAboutToQuit();
     void showMessagesNumber(int unread_messages, bool any_feed_has_new_unread_messages);
     void onAdBlockFailure();
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 #if QT_VERSION_MAJOR == 6
     void downloadRequested(QWebEngineDownloadRequest* download_item);
 #else
@@ -264,6 +290,7 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
     DatabaseFactory* m_database;
     DownloadManager* m_downloadManager;
     NotificationFactory* m_notifications;
+    ToastNotificationsManager* m_toastNotifications;
     NodeJs* m_nodejs;
     QThreadPool* m_workHorsePool;
     bool m_shouldRestart;
@@ -273,8 +300,8 @@ class RSSGUARD_DLLSPEC Application : public SingleApplication {
     int m_customAdblockPort;
     bool m_allowMultipleInstances;
 
-#if defined(USE_WEBENGINE)
-    bool m_forcedNoWebEngine;
+#if defined(NO_LITE)
+    bool m_forcedLite;
 #endif
 
 #if defined(Q_OS_WIN)

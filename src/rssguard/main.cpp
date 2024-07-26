@@ -8,23 +8,35 @@
 #include "miscellaneous/application.h"
 #include "services/abstract/label.h"
 
+#if defined(ENABLE_MEDIAPLAYER_LIBMPV)
+#include <clocale>
+#endif
+
 #if defined(Q_OS_WIN)
 #if QT_VERSION_MAJOR == 5
 #include <QtPlatformHeaders/QWindowsWindowFunctions>
 #else
 #include <QWindow>
-#include <QtGui/qpa/qplatformwindow_p.h>
 #endif
 #endif
 
+#include <QSettings>
 #include <QTextCodec>
 
 int main(int argc, char* argv[]) {
   qSetMessagePattern(QSL("time=\"%{time process}\" type=\"%{type}\" -> %{message}"));
 
+  // NOTE: https://github.com/martinrotter/rssguard/issues/1118
+  // NOTE: https://bugreports.qt.io/browse/QTBUG-117612
+  qputenv("QT_DISABLE_AUDIO_PREPARE", "1");
+
   // High DPI stuff.
 #if QT_VERSION >= 0x050E00 // Qt >= 5.14.0
-  qputenv("QT_ENABLE_HIGHDPI_SCALING", "1");
+  auto high_dpi_existing_env = qgetenv("QT_ENABLE_HIGHDPI_SCALING");
+
+  if (high_dpi_existing_env.isEmpty()) {
+    qputenv("QT_ENABLE_HIGHDPI_SCALING", "1");
+  }
 #else
   qputenv("QT_AUTO_SCREEN_SCALE_FACTOR", "1");
 #endif
@@ -35,7 +47,7 @@ int main(int argc, char* argv[]) {
 #endif
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-  QApplication::setDesktopFileName(APP_REVERSE_NAME + QSL(".desktop"));
+  QGuiApplication::setDesktopFileName(APP_REVERSE_NAME);
 #endif
 
 #if defined(QT_STATIC)
@@ -45,17 +57,15 @@ int main(int argc, char* argv[]) {
   Q_INIT_RESOURCE(rssguard);
 #endif
 
-  // Ensure that ini format is used as application settings storage on macOS.
-  QSettings::setDefaultFormat(QSettings::IniFormat);
-
-#if defined(Q_OS_MACOS)
-  QApplication::setAttribute(Qt::AA_DontShowIconsInMenus);
-#endif
+  QSettings::setDefaultFormat(QSettings::Format::IniFormat);
+  QApplication::setAttribute(Qt::ApplicationAttribute::AA_UseDesktopOpenGL, true);
 
   // We create our own "arguments" list as Qt strips something
   // sometimes out.
   char** const av = argv;
   QStringList raw_cli_args;
+
+  raw_cli_args.reserve(argc);
 
   for (int a = 0; a < argc; a++) {
     raw_cli_args << QString::fromLocal8Bit(av[a]);
@@ -65,10 +75,23 @@ int main(int argc, char* argv[]) {
   QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));
 #endif
 
+  // Set some names.
+  QCoreApplication::setApplicationName(QSL(APP_NAME));
+  QCoreApplication::setApplicationVersion(QSL(APP_VERSION));
+  QCoreApplication::setOrganizationDomain(QSL(APP_URL));
+
+  qDebugNN << LOGSEC_CORE << "Starting" << NONQUOTE_W_SPACE_DOT(APP_LONG_NAME);
+  qDebugNN << LOGSEC_CORE << "Current UTC date/time is"
+           << NONQUOTE_W_SPACE_DOT(QDateTime::currentDateTimeUtc().toString(Qt::DateFormat::ISODate));
+
   // Instantiate base application object.
   Application application(QSL(APP_LOW_NAME), argc, argv, raw_cli_args);
 
-  qDebugNN << LOGSEC_CORE << "Starting" << NONQUOTE_W_SPACE_DOT(APP_LONG_NAME);
+#if defined(ENABLE_MEDIAPLAYER_LIBMPV)
+  qDebugNN << LOGSEC_CORE << "Setting locale for LC_NUMERIC to C as libmpv requires it.";
+  std::setlocale(LC_NUMERIC, "C");
+#endif
+
   qDebugNN << LOGSEC_CORE << "Instantiated class " << QUOTE_W_SPACE_DOT(application.metaObject()->className());
 
   // Check if another instance is running.
@@ -77,21 +100,17 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
-  // Load localization and setup locale before any widget is constructed.
-  qApp->localization()->loadActiveLanguage();
   qApp->setFeedReader(new FeedReader(&application));
 
   // Register needed metatypes.
+  qRegisterMetaType<QNetworkAccessManager::Operation>("QNetworkAccessManager::Operation");
   qRegisterMetaType<QList<Message>>("QList<Message>");
   qRegisterMetaType<QList<RootItem*>>("QList<RootItem*>");
   qRegisterMetaType<QList<Label*>>("QList<Label*>");
   qRegisterMetaType<Label*>("Label*");
 
-  // These settings needs to be set before any QSettings object.
-  Application::setApplicationName(QSL(APP_NAME));
-  Application::setApplicationVersion(QSL(APP_VERSION));
-  Application::setOrganizationDomain(QSL(APP_URL));
-  Application::setWindowIcon(qApp->desktopAwareIcon());
+  // Set window icon, particularly for Linux/Wayland.
+  QGuiApplication::setWindowIcon(qApp->desktopAwareIcon());
 
   qApp->reactOnForeignNotifications();
 
@@ -117,16 +136,6 @@ int main(int argc, char* argv[]) {
 
   qApp
     ->parseCmdArgumentsFromOtherInstance(qApp->cmdParser()->positionalArguments().join(QSL(ARGUMENTS_LIST_SEPARATOR)));
-
-#if defined(Q_OS_WIN)
-#if QT_VERSION_MAJOR == 6
-  // NOTE: Fixes https://github.com/martinrotter/rssguard/issues/953 for Qt 6.
-  using QWindowsWindow = QNativeInterface::Private::QWindowsWindow;
-  if (auto w_w = main_window.windowHandle()->nativeInterface<QWindowsWindow>()) {
-    w_w->setHasBorderInFullScreen(true);
-  }
-#endif
-#endif
 
   return Application::exec();
 }

@@ -3,9 +3,8 @@
 #ifndef WEBBROWSER_H
 #define WEBBROWSER_H
 
-#include "gui/tabcontent.h"
-
 #include "core/message.h"
+#include "gui/tabcontent.h"
 #include "services/abstract/rootitem.h"
 
 #include <QPointer>
@@ -22,10 +21,9 @@ class QLabel;
 class TabWidget;
 class WebViewer;
 class LocationLineEdit;
-class DiscoverFeedsButton;
 class SearchTextWidget;
 
-class WebBrowser : public TabContent {
+class RSSGUARD_DLLSPEC WebBrowser : public TabContent {
     Q_OBJECT
 
     friend class WebEngineViewer;
@@ -60,6 +58,11 @@ class WebBrowser : public TabContent {
 
   private slots:
     void onZoomFactorChanged();
+
+#if defined(ENABLE_MEDIAPLAYER)
+    void playCurrentSiteInMediaPlayer();
+#endif
+
     void openCurrentSiteInSystemBrowser();
     void updateUrl(const QUrl& url);
     void onLoadingStarted();
@@ -71,8 +74,13 @@ class WebBrowser : public TabContent {
     void newWindowRequested(WebViewer* viewer);
 
     void readabilePage();
-    void setReadabledHtml(const QString& better_html);
-    void readabilityFailed(const QString& error);
+    void getFullArticle();
+
+    void setReadabledHtml(const QObject* sndr, const QString& better_html);
+    void readabilityFailed(const QObject* sndr, const QString& error);
+
+    void setFullArticleHtml(const QObject* sndr, const QString& url, const QString& json_answer);
+    void fullArticleFailed(const QObject* sndr, const QString& error);
 
   signals:
     void windowCloseRequested();
@@ -84,6 +92,8 @@ class WebBrowser : public TabContent {
     void bindWebView();
     void createConnections();
 
+    Message messageFromExtractor(const QJsonDocument& extracted_data) const;
+
   private:
     QVBoxLayout* m_layout;
     QToolBar* m_toolBar;
@@ -91,15 +101,20 @@ class WebBrowser : public TabContent {
     SearchTextWidget* m_searchWidget;
     LocationLineEdit* m_txtLocation;
     QAction* m_txtLocationAction;
-    DiscoverFeedsButton* m_btnDiscoverFeeds;
-    QWidgetAction* m_btnDiscoverFeedsAction;
     QProgressBar* m_loadingProgress;
     QAction* m_actionBack;
     QAction* m_actionForward;
     QAction* m_actionReload;
     QAction* m_actionStop;
     QAction* m_actionOpenInSystemBrowser;
+
+#if defined(ENABLE_MEDIAPLAYER)
+    QAction* m_actionPlayPageInMediaPlayer;
+#endif
+
     QAction* m_actionReadabilePage;
+    QAction* m_actionGetFullArticle;
+
     QList<Message> m_messages;
     QPointer<RootItem> m_root;
 };

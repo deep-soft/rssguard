@@ -15,7 +15,6 @@
 #include "miscellaneous/externaltool.h"
 #include "miscellaneous/feedreader.h"
 #include "miscellaneous/settings.h"
-#include "network-web/networkfactory.h"
 #include "network-web/webfactory.h"
 #include "qnamespace.h"
 #include "services/abstract/labelsnode.h"
@@ -23,6 +22,7 @@
 
 #include <QClipboard>
 #include <QFileIconProvider>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QProcess>
@@ -40,12 +40,13 @@ MessagesView::MessagesView(QWidget* parent)
   createConnections();
   setModel(m_proxyModel);
   setupAppearance();
+  setupArticleMarkingPolicy();
   header()->setContextMenuPolicy(Qt::ContextMenuPolicy::CustomContextMenu);
   connect(header(), &QHeaderView::customContextMenuRequested, this, [=](QPoint point) {
     TreeViewColumnsMenu mm(header());
     mm.exec(header()->mapToGlobal(point));
   });
-
+  connect(&m_delayedArticleMarker, &QTimer::timeout, this, &MessagesView::markSelectedMessagesReadDelayed);
   reloadFontSettings();
 }
 
@@ -57,60 +58,57 @@ void MessagesView::reloadFontSettings() {
   m_sourceModel->setupFonts();
 }
 
+void MessagesView::setupArticleMarkingPolicy() {
+  m_articleMarkingPolicy =
+    ArticleMarkingPolicy(qApp->settings()->value(GROUP(Messages), SETTING(Messages::ArticleMarkOnSelection)).toInt());
+  m_articleMarkingDelay =
+    qApp->settings()->value(GROUP(Messages), SETTING(Messages::ArticleMarkOnSelectionDelay)).toInt();
+
+  m_delayedArticleMarker.setSingleShot(true);
+  m_delayedArticleMarker.setInterval(m_articleMarkingDelay);
+}
+
 QByteArray MessagesView::saveHeaderState() const {
-  QByteArray arr;
-  QDataStream outt(&arr, QIODevice::OpenModeFlag::WriteOnly);
+  QJsonObject obj;
 
-  // auto xx = header()->count();
+  obj[QSL("header_count")] = header()->count();
 
-  outt.setVersion(QDataStream::Version::Qt_4_7);
-  outt << header()->count();
-  outt << int(header()->sortIndicatorOrder());
-  outt << header()->sortIndicatorSection();
-
-  // Save column data.
+  // Store column attributes.
   for (int i = 0; i < header()->count(); i++) {
-    // auto aaa = header()->isSectionHidden(i);
-    // auto ax = m_sourceModel->headerData(i, Qt::Orientation::Horizontal, Qt::ItemDataRole::DisplayRole).toString();
-    // auto b = header()->visualIndex(i);
-    // auto c = header()->sectionSize(i);
-
-    outt << header()->visualIndex(i);
-    outt << header()->sectionSize(i);
-    outt << header()->isSectionHidden(i);
+    obj[QSL("header_%1_idx").arg(i)] = header()->visualIndex(i);
+    obj[QSL("header_%1_size").arg(i)] = header()->sectionSize(i);
+    obj[QSL("header_%1_hidden").arg(i)] = header()->isSectionHidden(i);
   }
 
-  return arr;
+  // Store sort attributes.
+  SortColumnsAndOrders orders = m_sourceModel->sortColumnAndOrders();
+
+  obj[QSL("sort_count")] = orders.m_columns.size();
+
+  for (int i = 0; i < orders.m_columns.size(); i++) {
+    obj[QSL("sort_%1_order").arg(i)] = orders.m_orders.at(i);
+    obj[QSL("sort_%1_column").arg(i)] = orders.m_columns.at(i);
+  }
+
+  return QJsonDocument(obj).toJson(QJsonDocument::JsonFormat::Compact);
 }
 
 void MessagesView::restoreHeaderState(const QByteArray& dta) {
-  QByteArray arr = dta;
-  QDataStream inn(&arr, QIODevice::OpenModeFlag::ReadOnly);
+  QJsonObject obj = QJsonDocument::fromJson(dta).object();
+  int saved_header_count = obj[QSL("header_count")].toInt();
 
-  inn.setVersion(QDataStream::Version::Qt_4_7);
-
-  int saved_header_count;
-  inn >> saved_header_count;
-
-  if (std::abs(saved_header_count - header()->count()) > 10) {
+  if (saved_header_count < header()->count()) {
     qWarningNN << LOGSEC_GUI << "Detected invalid state for list view.";
     return;
   }
 
-  int saved_sort_order;
-  inn >> saved_sort_order;
-  int saved_sort_column;
-  inn >> saved_sort_column;
+  int last_visible_column = 0;
 
+  // Restore column attributes.
   for (int i = 0; i < saved_header_count && i < header()->count(); i++) {
-    int vi, ss;
-    bool ish;
-
-    inn >> vi;
-    inn >> ss;
-    inn >> ish;
-
-    // auto ax = m_sourceModel->headerData(i, Qt::Orientation::Horizontal, Qt::ItemDataRole::DisplayRole).toString();
+    int vi = obj[QSL("header_%1_idx").arg(i)].toInt();
+    int ss = obj[QSL("header_%1_size").arg(i)].toInt();
+    bool ish = obj[QSL("header_%1_hidden").arg(i)].toBool();
 
     if (vi < header()->count()) {
       header()->swapSections(header()->visualIndex(i), vi);
@@ -118,10 +116,37 @@ void MessagesView::restoreHeaderState(const QByteArray& dta) {
 
     header()->resizeSection(i, ss);
     header()->setSectionHidden(i, ish);
+
+    if (!ish && vi > last_visible_column) {
+      last_visible_column = vi;
+    }
   }
 
-  if (saved_sort_column < header()->count()) {
-    header()->setSortIndicator(saved_sort_column, Qt::SortOrder(saved_sort_order));
+  // All columns are resizeable but last one is set to auto-stretch to fill remaining
+  // space. Sometimes this column is saved as too wide and causes
+  // horizontal scrollbar to appear. Therefore downsize it.
+  header()->resizeSection(header()->logicalIndex(last_visible_column), 1);
+
+  // Restore sort attributes.
+  int saved_sort_count = obj[QSL("sort_count")].toInt();
+
+  for (int i = saved_sort_count - 1; i > 0; i--) {
+    auto col = obj[QSL("sort_%1_column").arg(i)].toInt();
+    auto ordr = Qt::SortOrder(obj[QSL("sort_%1_order").arg(i)].toInt());
+
+    if (col < header()->count()) {
+      m_sourceModel->addSortState(col, ordr, false);
+    }
+  }
+
+  // Use newest sort as active.
+  if (saved_sort_count > 0) {
+    auto newest_col = obj[QSL("sort_0_column")].toInt();
+    auto newest_ordr = Qt::SortOrder(obj[QSL("sort_0_order")].toInt());
+
+    if (newest_col < header()->count()) {
+      header()->setSortIndicator(newest_col, newest_ordr);
+    }
   }
 }
 
@@ -140,8 +165,8 @@ void MessagesView::copyUrlOfSelectedArticles() const {
               .toString();
   }
 
-  if (qApp->clipboard() != nullptr && !urls.isEmpty()) {
-    qApp->clipboard()->setText(urls.join(TextFactory::newline()), QClipboard::Mode::Clipboard);
+  if (QGuiApplication::clipboard() != nullptr && !urls.isEmpty()) {
+    QGuiApplication::clipboard()->setText(urls.join(TextFactory::newline()), QClipboard::Mode::Clipboard);
   }
 }
 
@@ -150,15 +175,17 @@ void MessagesView::sort(int column,
                         bool repopulate_data,
                         bool change_header,
                         bool emit_changed_from_header,
-                        bool ignore_multicolumn_sorting) {
+                        bool ignore_multicolumn_sorting,
+                        int additional_article_id) {
   if (change_header && !emit_changed_from_header) {
     header()->blockSignals(true);
   }
 
   m_sourceModel->addSortState(column, order, ignore_multicolumn_sorting);
+  m_proxyModel->setAdditionalArticleId(additional_article_id);
 
   if (repopulate_data) {
-    m_sourceModel->repopulate();
+    m_sourceModel->repopulate(additional_article_id);
   }
 
   if (change_header) {
@@ -184,33 +211,38 @@ void MessagesView::keyboardSearch(const QString& search) {
 }
 
 void MessagesView::reloadSelections() {
+  bool force_load_currently_selected_article = true;
+
   const QDateTime dt1 = QDateTime::currentDateTime();
   QModelIndex current_index = selectionModel()->currentIndex();
   const bool is_current_selected =
     selectionModel()->selectedRows().contains(m_proxyModel->index(current_index.row(), 0, current_index.parent()));
   const QModelIndex mapped_current_index = m_proxyModel->mapToSource(current_index);
-  const Message selected_message = m_sourceModel->messageAt(mapped_current_index.row());
+  const int selected_message_id =
+    m_sourceModel->data(mapped_current_index.row(), MSG_DB_ID_INDEX, Qt::ItemDataRole::EditRole).toInt();
   const int col = header()->sortIndicatorSection();
   const Qt::SortOrder ord = header()->sortIndicatorOrder();
   bool do_not_mark_read_on_select = false;
 
   // Reload the model now.
-  sort(col, ord, true, false, false, true);
+  sort(col, ord, true, false, false, true, force_load_currently_selected_article ? selected_message_id : 0);
 
   // Now, we must find the same previously focused message.
-  if (selected_message.m_id > 0) {
+  if (selected_message_id > 0) {
     if (m_proxyModel->rowCount() == 0 || !is_current_selected) {
       current_index = QModelIndex();
     }
     else {
       for (int i = 0; i < m_proxyModel->rowCount(); i++) {
         QModelIndex msg_idx = m_proxyModel->index(i, MSG_DB_TITLE_INDEX);
-        Message msg = m_sourceModel->messageAt(m_proxyModel->mapToSource(msg_idx).row());
+        QModelIndex msg_source_idx = m_proxyModel->mapToSource(msg_idx);
+        int msg_id = m_sourceModel->data(msg_source_idx.row(), MSG_DB_ID_INDEX, Qt::ItemDataRole::EditRole).toInt();
 
-        if (msg.m_id == selected_message.m_id) {
+        if (msg_id == selected_message_id) {
           current_index = msg_idx;
 
-          if (!msg.m_isRead /* && selected_message.m_isRead */) {
+          if (!m_sourceModel->data(msg_source_idx.row(), MSG_DB_READ_INDEX, Qt::ItemDataRole::EditRole)
+                 .toBool() /* && selected_message.m_isRead */) {
             do_not_mark_read_on_select = true;
           }
 
@@ -230,7 +262,7 @@ void MessagesView::reloadSelections() {
     m_processingRightMouseButton = do_not_mark_read_on_select;
 
     setCurrentIndex(current_index);
-    reselectIndexes(QModelIndexList() << current_index);
+    reselectIndexes({current_index});
 
     m_processingRightMouseButton = false;
   }
@@ -283,7 +315,7 @@ void MessagesView::setupAppearance() {
   header()->setMinimumSectionSize(MESSAGES_VIEW_MINIMUM_COL);
   header()->setFirstSectionMovable(true);
   header()->setCascadingSectionResizes(false);
-  header()->setStretchLastSection(false);
+  header()->setStretchLastSection(true);
 
   adjustColumns();
 }
@@ -354,7 +386,7 @@ void MessagesView::initializeContextMenu() {
 
   menu_ext_tools->setIcon(qApp->icons()->fromTheme(QSL("document-open")));
 
-  for (const ExternalTool& tool : qAsConst(tools)) {
+  for (const ExternalTool& tool : std::as_const(tools)) {
     QAction* act_tool = new QAction(QFileInfo(tool.executable()).fileName(), menu_ext_tools);
 
     act_tool->setIcon(icon_provider.icon(QFileInfo(tool.executable())));
@@ -397,6 +429,7 @@ void MessagesView::initializeContextMenu() {
                                               << qApp->mainForm()->m_ui->m_actionOpenSelectedSourceArticlesExternally
                                               << qApp->mainForm()->m_ui->m_actionOpenSelectedMessagesInternally
                                               << qApp->mainForm()->m_ui->m_actionOpenSelectedMessagesInternallyNoTab
+                                              << qApp->mainForm()->m_ui->m_actionPlaySelectedArticlesInMediaPlayer
                                               << qApp->mainForm()->m_ui->m_actionCopyUrlSelectedArticles
                                               << qApp->mainForm()->m_ui->m_actionMarkSelectedMessagesAsRead
                                               << qApp->mainForm()->m_ui->m_actionMarkSelectedMessagesAsUnread
@@ -486,8 +519,22 @@ void MessagesView::selectionChanged(const QItemSelection& selected, const QItemS
     // Set this message as read only if current item
     // wasn't changed by "mark selected messages unread" action.
     if (!m_processingRightMouseButton) {
-      m_sourceModel->setMessageRead(mapped_current_index.row(), RootItem::ReadStatus::Read);
-      message.m_isRead = true;
+      if (!message.m_isRead) {
+        if (m_articleMarkingPolicy == ArticleMarkingPolicy::MarkImmediately) {
+          qDebugNN << LOGSEC_GUI << "Marking article as read immediately.";
+
+          m_sourceModel->setMessageRead(mapped_current_index.row(), RootItem::ReadStatus::Read);
+          message.m_isRead = true;
+        }
+        else if (m_articleMarkingPolicy == ArticleMarkingPolicy::MarkWithDelay) {
+          qDebugNN << LOGSEC_GUI << "(Re)Starting timer to mark article as read with a delay.";
+          m_delayedArticleIndex = current_index;
+          m_delayedArticleMarker.start();
+        }
+        else {
+          // NOTE: Article can only be marked as read manually, so just change.
+        }
+      }
     }
 
     emit currentMessageChanged(message, m_sourceModel->loadedItem());
@@ -508,13 +555,46 @@ void MessagesView::selectionChanged(const QItemSelection& selected, const QItemS
   QTreeView::selectionChanged(selected, deselected);
 }
 
+void MessagesView::markSelectedMessagesReadDelayed() {
+  qDebugNN << LOGSEC_GUI << "Delay has passed! Marking article as read NOW.";
+
+  const QModelIndexList selected_rows = selectionModel()->selectedRows();
+  const QModelIndex current_index = m_delayedArticleIndex;
+
+  if (selected_rows.size() == 1 && current_index.isValid() && !m_processingRightMouseButton &&
+      m_articleMarkingPolicy == ArticleMarkingPolicy::MarkWithDelay) {
+    const QModelIndex mapped_current_index = m_proxyModel->mapToSource(current_index);
+    Message message = m_sourceModel->messageAt(m_proxyModel->mapToSource(current_index).row());
+
+    m_sourceModel->setMessageRead(mapped_current_index.row(), RootItem::ReadStatus::Read);
+    message.m_isRead = true;
+    emit currentMessageChanged(message, m_sourceModel->loadedItem());
+  }
+}
+
 void MessagesView::loadItem(RootItem* item) {
+  m_delayedArticleMarker.stop();
+
   const int col = header()->sortIndicatorSection();
   const Qt::SortOrder ord = header()->sortIndicatorOrder();
 
   scrollToTop();
   sort(col, ord, false, true, false, true);
   m_sourceModel->loadMessages(item);
+
+  /*
+  if (item->kind() == RootItem::Kind::Feed) {
+    if (item->toFeed()->isRtl()) {
+      setLayoutDirection(Qt::LayoutDirection::RightToLeft);
+    }
+    else {
+      setLayoutDirection(Qt::LayoutDirection::LeftToRight);
+    }
+  }
+  else {
+    setLayoutDirection(Qt::LayoutDirection::LeftToRight);
+  }
+  */
 
   // Messages are loaded, make sure that previously
   // active message is not shown in browser.
@@ -529,7 +609,7 @@ void MessagesView::changeFilter(MessagesProxyModel::MessageListFilter filter) {
 void MessagesView::openSelectedSourceMessagesExternally() {
   auto rws = selectionModel()->selectedRows();
 
-  for (const QModelIndex& index : qAsConst(rws)) {
+  for (const QModelIndex& index : std::as_const(rws)) {
     QString link = m_sourceModel->messageAt(m_proxyModel->mapToSource(index).row())
                      .m_url.replace(QRegularExpression(QSL("[\\t\\n]")), QString());
 
@@ -550,16 +630,34 @@ void MessagesView::openSelectedSourceMessagesExternally() {
   }
 }
 
-void MessagesView::openSelectedMessagesInternally() {
-  QList<Message> messages;
+#if defined(ENABLE_MEDIAPLAYER)
+void MessagesView::playSelectedArticleInMediaPlayer() {
   auto rws = selectionModel()->selectedRows();
 
-  for (const QModelIndex& index : qAsConst(rws)) {
-    messages << m_sourceModel->messageAt(m_proxyModel->mapToSource(index).row());
-  }
+  if (!rws.isEmpty()) {
+    auto msg = m_sourceModel->messageAt(m_proxyModel->mapToSource(rws.first()).row());
 
-  if (!messages.isEmpty()) {
-    emit openMessagesInNewspaperView(m_sourceModel->loadedItem(), messages);
+    if (msg.m_url.isEmpty()) {
+      qApp->showGuiMessage(Notification::Event::GeneralEvent,
+                           GuiMessage(tr("No URL"),
+                                      tr("Article cannot be played in media player as it has no URL"),
+                                      QSystemTrayIcon::MessageIcon::Warning),
+                           GuiMessageDestination(true, true));
+    }
+    else {
+      emit playLinkInMediaPlayer(msg.m_url);
+    }
+  }
+}
+#endif
+
+void MessagesView::openSelectedMessagesInternally() {
+  auto rws = selectionModel()->selectedRows();
+
+  if (!rws.isEmpty()) {
+    auto msg = m_sourceModel->messageAt(m_proxyModel->mapToSource(rws.first()).row());
+
+    emit openSingleMessageInNewTab(m_sourceModel->loadedItem(), msg);
   }
 }
 
@@ -786,9 +884,11 @@ void MessagesView::openSelectedMessagesWithExternalTool() {
     auto tool = sndr->data().value<ExternalTool>();
     auto rws = selectionModel()->selectedRows();
 
-    for (const QModelIndex& index : qAsConst(rws)) {
-      const QString link = m_sourceModel->messageAt(m_proxyModel->mapToSource(index).row())
-                             .m_url.replace(QRegularExpression(QSL("[\\t\\n]")), QString());
+    for (const QModelIndex& index : std::as_const(rws)) {
+      const QString link =
+        m_sourceModel->data(m_proxyModel->mapToSource(index).row(), MSG_DB_URL_INDEX, Qt::ItemDataRole::EditRole)
+          .toString()
+          .replace(QRegularExpression(QSL("[\\t\\n]")), QString());
 
       if (!link.isEmpty()) {
         if (!tool.run(link)) {
@@ -803,6 +903,8 @@ void MessagesView::openSelectedMessagesWithExternalTool() {
 }
 
 void MessagesView::adjustColumns() {
+  qDebugNN << LOGSEC_GUI << "Article list header geometries changed.";
+
   if (header()->count() > 0 && !m_columnsAdjusted) {
     m_columnsAdjusted = true;
 
@@ -810,8 +912,6 @@ void MessagesView::adjustColumns() {
     for (int i = 0; i < header()->count(); i++) {
       header()->setSectionResizeMode(i, QHeaderView::ResizeMode::Interactive);
     }
-
-    header()->setSectionResizeMode(MSG_DB_TITLE_INDEX, QHeaderView::ResizeMode::Stretch);
 
     // Hide columns.
     hideColumn(MSG_DB_ID_INDEX);
@@ -826,12 +926,10 @@ void MessagesView::adjustColumns() {
     hideColumn(MSG_DB_CUSTOM_HASH_INDEX);
     hideColumn(MSG_DB_FEED_CUSTOM_ID_INDEX);
     hideColumn(MSG_DB_FEED_TITLE_INDEX);
+    hideColumn(MSG_DB_FEED_IS_RTL_INDEX);
     hideColumn(MSG_DB_HAS_ENCLOSURES);
     hideColumn(MSG_DB_LABELS);
-
-#if !defined(NDEBUG)
     hideColumn(MSG_DB_LABELS_IDS);
-#endif
   }
 }
 

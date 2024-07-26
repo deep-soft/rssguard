@@ -7,7 +7,6 @@
 #include "miscellaneous/application.h"
 #include "services/abstract/cacheforserviceroot.h"
 #include "services/abstract/gui/formaddeditprobe.h"
-#include "services/abstract/labelsnode.h"
 #include "services/abstract/serviceroot.h"
 
 #include <QPainter>
@@ -20,7 +19,7 @@ Search::Search(const QString& name, const QString& filter, const QColor& color, 
   setFilter(filter);
 }
 
-Search::Search(RootItem* parent_item) : RootItem(parent_item) {
+Search::Search(RootItem* parent_item) : RootItem(parent_item), m_totalCount(-1), m_unreadCount(-1) {
   setKind(RootItem::Kind::Probe);
 }
 
@@ -29,7 +28,7 @@ QColor Search::color() const {
 }
 
 void Search::setColor(const QColor& color) {
-  setIcon(generateIcon(color));
+  setIcon(IconFactory::generateIcon(color));
   m_color = color;
 }
 
@@ -45,77 +44,34 @@ bool Search::canBeEdited() const {
   return true;
 }
 
-bool Search::editViaGui() {
-  FormAddEditProbe form(qApp->mainFormWidget());
-
-  if (form.execForEdit(this)) {
-    QSqlDatabase db = qApp->database()->driver()->connection(metaObject()->className());
-
-    return true;
-    // return DatabaseQueries::updateLabel(db, this);
-  }
-  else {
-    return false;
-  }
-
-  return false;
-}
-
 bool Search::canBeDeleted() const {
   return true;
 }
 
-bool Search::deleteViaGui() {
-  QSqlDatabase db = qApp->database()->driver()->connection(metaObject()->className());
-
-  /*
-  if (DatabaseQueries::deleteLabel(db, this)) {
+bool Search::deleteItem() {
+  try {
+    QSqlDatabase db = qApp->database()->driver()->connection(metaObject()->className());
+    DatabaseQueries::deleteProbe(db, this);
     getParentServiceRoot()->requestItemRemoval(this);
     return true;
   }
-  else {
+  catch (const ApplicationException& ex) {
+    qCriticalNN << LOGSEC_CORE << "Failed to remove probe:" << QUOTE_W_SPACE_DOT(ex.message());
     return false;
   }
-  */
-  return false;
 }
 
 void Search::updateCounts(bool including_total_count) {
-  QSqlDatabase database = qApp->database()->driver()->threadSafeConnection(metaObject()->className());
-  int account_id = getParentServiceRoot()->accountId();
+  Q_UNUSED(including_total_count)
 
-  /*
-  auto ac = DatabaseQueries::getMessageCountsForLabel(database, this, account_id);
-
-  if (including_total_count) {
-    setCountOfAllMessages(ac.m_total);
-  }
-
-  setCountOfUnreadMessages(ac.m_unread);
-  */
+  setCountOfAllMessages(-1);
+  setCountOfUnreadMessages(-1);
 }
 
 QList<Message> Search::undeletedMessages() const {
-  return {};
-  /*
   QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
-  return DatabaseQueries::getUndeletedMessagesWithLabel(database, this);
-  */
-}
-
-QIcon Search::generateIcon(const QColor& color) {
-  QPixmap pxm(64, 64);
-
-  pxm.fill(Qt::GlobalColor::transparent);
-
-  QPainter paint(&pxm);
-
-  paint.setBrush(color);
-  paint.setPen(Qt::GlobalColor::transparent);
-  paint.drawEllipse(pxm.rect().marginsRemoved(QMargins(2, 2, 2, 2)));
-
-  return pxm;
+  return DatabaseQueries::getUndeletedMessagesForProbe(database, this);
 }
 
 QString Search::filter() const {
@@ -138,41 +94,48 @@ bool Search::cleanMessages(bool clear_only_read) {
   ServiceRoot* service = getParentServiceRoot();
   QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
-  return false;
-  /*
-  if (DatabaseQueries::cleanLabelledMessages(database, clear_only_read, this)) {
+  try {
+    DatabaseQueries::cleanProbedMessages(database, clear_only_read, this);
     service->updateCounts(true);
     service->itemChanged(service->getSubTree());
     service->requestReloadMessageList(true);
     return true;
   }
-  else {
+  catch (const ApplicationException& ex) {
+    qCriticalNN << LOGSEC_CORE << "Failed to clean messages of probe:" << QUOTE_W_SPACE_DOT(ex.message());
     return false;
   }
-  */
+}
+
+QString Search::additionalTooltip() const {
+  return tr("Regular expression: %1").arg(QSL("<code>%1</code>").arg(filter()));
 }
 
 bool Search::markAsReadUnread(RootItem::ReadStatus status) {
   ServiceRoot* service = getParentServiceRoot();
   auto* cache = dynamic_cast<CacheForServiceRoot*>(service);
 
-  /*
   if (cache != nullptr) {
-    cache->addMessageStatesToCache(service->customIDSOfMessagesForItem(this, status), status);
+    try {
+      cache->addMessageStatesToCache(service->customIDSOfMessagesForItem(this, status), status);
+    }
+    catch (const ApplicationException& ex) {
+      qCriticalNN << LOGSEC_DB << "Cannot add some IDs to state cache:" << QUOTE_W_SPACE_DOT(ex.message());
+      return false;
+    }
   }
 
   QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
-  if (DatabaseQueries::markLabelledMessagesReadUnread(database, this, status)) {
+  try {
+    DatabaseQueries::markProbeReadUnread(database, this, status);
     service->updateCounts(false);
     service->itemChanged(service->getSubTree());
     service->requestReloadMessageList(status == RootItem::ReadStatus::Read);
     return true;
   }
-  else {
+  catch (const ApplicationException& ex) {
+    qCriticalNN << LOGSEC_DB << "Cannot mark probe as read/unread:" << QUOTE_W_SPACE_DOT(ex.message());
     return false;
   }
-  */
-
-  return false;
 }

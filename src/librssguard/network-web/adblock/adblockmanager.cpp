@@ -13,7 +13,7 @@
 #include "network-web/networkfactory.h"
 #include "network-web/webfactory.h"
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
 #include "network-web/adblock/adblockurlinterceptor.h"
 #include "network-web/webengine/networkurlinterceptor.h"
 #endif
@@ -29,7 +29,7 @@
 
 AdBlockManager::AdBlockManager(QObject* parent)
   : QObject(parent), m_loaded(false), m_enabled(false), m_installing(false),
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     m_interceptor(new AdBlockUrlInterceptor(this)),
 #endif
     m_serverProcess(nullptr), m_cacheBlocks({}) {
@@ -94,7 +94,7 @@ void AdBlockManager::setEnabled(bool enabled) {
   }
 
   if (!m_loaded) {
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     qApp->web()->urlIinterceptor()->installUrlInterceptor(m_interceptor);
 #endif
     m_loaded = true;
@@ -106,7 +106,7 @@ void AdBlockManager::setEnabled(bool enabled) {
   if (m_enabled) {
     if (!m_installing) {
       m_installing = true;
-      qApp->nodejs()->installUpdatePackages({{QSL(CLIQZ_ADBLOCKED_PACKAGE), QSL(CLIQZ_ADBLOCKED_VERSION)}});
+      qApp->nodejs()->installUpdatePackages(this, {{QSL(CLIQZ_ADBLOCKED_PACKAGE), QSL(CLIQZ_ADBLOCKED_VERSION)}});
     }
   }
   else {
@@ -177,7 +177,9 @@ void AdBlockManager::showDialog() {
   AdBlockDialog(qApp->mainFormWidget()).exec();
 }
 
-void AdBlockManager::onPackageReady(const QList<NodeJs::PackageMetadata>& pkgs, bool already_up_to_date) {
+void AdBlockManager::onPackageReady(const QObject* sndr,
+                                    const QList<NodeJs::PackageMetadata>& pkgs,
+                                    bool already_up_to_date) {
   Q_UNUSED(already_up_to_date)
 
   bool concerns_adblock = boolinq::from(pkgs).any([](const NodeJs::PackageMetadata& pkg) {
@@ -201,7 +203,9 @@ void AdBlockManager::onPackageReady(const QList<NodeJs::PackageMetadata>& pkgs, 
   }
 }
 
-void AdBlockManager::onPackageError(const QList<NodeJs::PackageMetadata>& pkgs, const QString& error) {
+void AdBlockManager::onPackageError(const QObject* sndr,
+                                    const QList<NodeJs::PackageMetadata>& pkgs,
+                                    const QString& error) {
   bool concerns_adblock = boolinq::from(pkgs).any([](const NodeJs::PackageMetadata& pkg) {
     return pkg.m_name == QSL(CLIQZ_ADBLOCKED_PACKAGE);
   });
@@ -326,6 +330,8 @@ QProcess* AdBlockManager::startServer(int port) {
 }
 
 void AdBlockManager::killServer() {
+  m_cacheBlocks.clear();
+
   if (m_serverProcess != nullptr) {
     disconnect(m_serverProcess,
                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
@@ -341,10 +347,7 @@ void AdBlockManager::killServer() {
   }
 }
 
-void AdBlockManager::updateUnifiedFiltersFileAndStartServer() {
-  m_cacheBlocks.clear();
-  killServer();
-
+void AdBlockManager::updateUnifiedFilters() {
   if (QFile::exists(m_unifiedFiltersFile)) {
     QFile::remove(m_unifiedFiltersFile);
   }
@@ -353,7 +356,7 @@ void AdBlockManager::updateUnifiedFiltersFileAndStartServer() {
   auto filter_lists = filterLists();
 
   // Download filters one by one and append.
-  for (const QString& filter_list_url : qAsConst(filter_lists)) {
+  for (const QString& filter_list_url : std::as_const(filter_lists)) {
     if (filter_list_url.simplified().isEmpty()) {
       continue;
     }
@@ -383,6 +386,11 @@ void AdBlockManager::updateUnifiedFiltersFileAndStartServer() {
                          QDir::separator() + QSL("adblock.filters");
 
   IOFactory::writeFile(m_unifiedFiltersFile, unified_contents.toUtf8());
+}
+
+void AdBlockManager::updateUnifiedFiltersFileAndStartServer() {
+  killServer();
+  updateUnifiedFilters();
 
   if (m_enabled) {
     auto custom_port = qApp->customAdblockPort();

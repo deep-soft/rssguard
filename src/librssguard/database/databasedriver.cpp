@@ -3,11 +3,10 @@
 #include "database/databasedriver.h"
 
 #include "definitions/definitions.h"
-#include "exceptions/ioexception.h"
+#include "exceptions/applicationexception.h"
 #include "miscellaneous/iofactory.h"
 
 #include <QDir>
-#include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QThread>

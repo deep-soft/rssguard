@@ -3,11 +3,10 @@
 #ifndef LABELSNODE_H
 #define LABELSNODE_H
 
+#include "services/abstract/label.h"
 #include "services/abstract/rootitem.h"
 
-#include "services/abstract/label.h"
-
-class LabelsNode : public RootItem {
+class RSSGUARD_DLLSPEC LabelsNode : public RootItem {
     Q_OBJECT
 
   public:
@@ -18,8 +17,6 @@ class LabelsNode : public RootItem {
 
     virtual QList<Message> undeletedMessages() const;
     virtual QList<QAction*> contextMenuFeedsList();
-    virtual int countOfUnreadMessages() const;
-    virtual int countOfAllMessages() const;
     virtual void updateCounts(bool including_total_count);
 
     Label* labelById(const QString& custom_id);

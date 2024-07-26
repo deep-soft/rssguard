@@ -6,9 +6,9 @@
 #include "exceptions/applicationexception.h"
 #include "services/abstract/feed.h"
 
-class FeedFetchException : public ApplicationException {
+class RSSGUARD_DLLSPEC FeedFetchException : public ApplicationException {
   public:
-    explicit FeedFetchException(Feed::Status feed_status, QString message = {});
+    explicit FeedFetchException(Feed::Status feed_status, const QString& message = {});
 
     Feed::Status feedStatus() const;
 

@@ -3,9 +3,9 @@
 #include "services/abstract/serviceroot.h"
 
 #include "3rd-party/boolinq/boolinq.h"
-#include "core/feedsmodel.h"
 #include "core/messagesmodel.h"
 #include "database/databasequeries.h"
+#include "definitions/globals.h"
 #include "exceptions/applicationexception.h"
 #include "miscellaneous/application.h"
 #include "miscellaneous/iconfactory.h"
@@ -14,6 +14,11 @@
 #include "services/abstract/category.h"
 #include "services/abstract/feed.h"
 #include "services/abstract/gui/custommessagepreviewer.h"
+#include "services/abstract/gui/formaccountdetails.h"
+#include "services/abstract/gui/formaddeditlabel.h"
+#include "services/abstract/gui/formaddeditprobe.h"
+#include "services/abstract/gui/formcategorydetails.h"
+#include "services/abstract/gui/formfeeddetails.h"
 #include "services/abstract/importantnode.h"
 #include "services/abstract/labelsnode.h"
 #include "services/abstract/recyclebin.h"
@@ -31,7 +36,7 @@ ServiceRoot::ServiceRoot(RootItem* parent)
 
 ServiceRoot::~ServiceRoot() {}
 
-bool ServiceRoot::deleteViaGui() {
+bool ServiceRoot::deleteItem() {
   QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
   if (DatabaseQueries::deleteAccount(database, this)) {
@@ -42,6 +47,95 @@ bool ServiceRoot::deleteViaGui() {
   else {
     return false;
   }
+}
+
+void ServiceRoot::editItems(const QList<RootItem*>& items) {
+  // Feed editing.
+  auto std_feeds = boolinq::from(items)
+                     .select([](RootItem* it) {
+                       return qobject_cast<Feed*>(it);
+                     })
+                     .where([](Feed* fd) {
+                       return fd != nullptr;
+                     })
+                     .toStdList();
+
+  if (!std_feeds.empty()) {
+    QScopedPointer<FormFeedDetails> form_pointer(new FormFeedDetails(this, qApp->mainFormWidget()));
+
+    form_pointer->addEditFeed<Feed>(FROM_STD_LIST(QList<Feed*>, std_feeds));
+    return;
+  }
+
+  // Category editing.
+  auto std_categories = boolinq::from(items)
+                          .select([](RootItem* it) {
+                            return qobject_cast<Category*>(it);
+                          })
+                          .where([](Category* fd) {
+                            return fd != nullptr;
+                          })
+                          .toStdList();
+
+  if (!std_categories.empty()) {
+    QScopedPointer<FormCategoryDetails> form_pointer(new FormCategoryDetails(this, nullptr, qApp->mainFormWidget()));
+
+    form_pointer->addEditCategory<Category>(FROM_STD_LIST(QList<Category*>, std_categories));
+    return;
+  }
+
+  // Label editing.
+  auto std_labels = boolinq::from(items)
+                      .select([](RootItem* it) {
+                        return qobject_cast<Label*>(it);
+                      })
+                      .where([](Label* fd) {
+                        return fd != nullptr;
+                      })
+                      .toStdList();
+
+  if (std_labels.size() == 1) {
+    // Support editing labels one by one.
+    FormAddEditLabel form(qApp->mainFormWidget());
+    Label* lbl = std_labels.front();
+
+    if (form.execForEdit(lbl)) {
+      QSqlDatabase db = qApp->database()->driver()->connection(metaObject()->className());
+
+      DatabaseQueries::updateLabel(db, lbl);
+    }
+
+    return;
+  }
+
+  // Probe editing.
+  auto std_probes = boolinq::from(items)
+                      .select([](RootItem* it) {
+                        return qobject_cast<Search*>(it);
+                      })
+                      .where([](Search* fd) {
+                        return fd != nullptr;
+                      })
+                      .toStdList();
+
+  if (std_probes.size() == 1) {
+    // Support editing probes one by one.
+    FormAddEditProbe form(qApp->mainFormWidget());
+    Search* probe = std_probes.front();
+
+    if (form.execForEdit(probe)) {
+      QSqlDatabase db = qApp->database()->driver()->connection(metaObject()->className());
+
+      DatabaseQueries::updateProbe(db, probe);
+      updateCounts(probe);
+      itemChanged({probe});
+    }
+
+    return;
+  }
+
+  qApp->showGuiMessage(Notification::Event::GeneralEvent,
+                       {tr("Unsupported"), tr("This is not suppported (yet)."), QSystemTrayIcon::MessageIcon::Warning});
 }
 
 bool ServiceRoot::markAsReadUnread(RootItem::ReadStatus status) {
@@ -137,12 +231,12 @@ void ServiceRoot::updateCounts(bool including_total_count) {
   QList<Feed*> feeds;
   auto str = getSubTree();
 
-  for (RootItem* child : qAsConst(str)) {
+  for (RootItem* child : std::as_const(str)) {
     if (child->kind() == RootItem::Kind::Feed) {
       feeds.append(child->toFeed());
     }
     else if (child->kind() != RootItem::Kind::Label && child->kind() != RootItem::Kind::Category &&
-             child->kind() != RootItem::Kind::ServiceRoot) {
+             child->kind() != RootItem::Kind::ServiceRoot && child->kind() != RootItem::Kind::Probe) {
       child->updateCounts(including_total_count);
     }
   }
@@ -212,9 +306,10 @@ void ServiceRoot::removeOldAccountFromDatabase(bool delete_messages_too, bool de
 void ServiceRoot::cleanAllItemsFromModel(bool clean_labels_too) {
   auto chi = childItems();
 
-  for (RootItem* top_level_item : qAsConst(chi)) {
+  for (RootItem* top_level_item : std::as_const(chi)) {
     if (top_level_item->kind() != RootItem::Kind::Bin && top_level_item->kind() != RootItem::Kind::Important &&
-        top_level_item->kind() != RootItem::Kind::Unread && top_level_item->kind() != RootItem::Kind::Labels) {
+        top_level_item->kind() != RootItem::Kind::Unread && top_level_item->kind() != RootItem::Kind::Probes &&
+        top_level_item->kind() != RootItem::Kind::Labels) {
       requestItemRemoval(top_level_item);
     }
   }
@@ -222,7 +317,7 @@ void ServiceRoot::cleanAllItemsFromModel(bool clean_labels_too) {
   if (labelsNode() != nullptr && clean_labels_too) {
     auto lbl_chi = labelsNode()->childItems();
 
-    for (RootItem* lbl : qAsConst(lbl_chi)) {
+    for (RootItem* lbl : std::as_const(lbl_chi)) {
       requestItemRemoval(lbl);
     }
   }
@@ -312,11 +407,17 @@ void ServiceRoot::saveAccountDataToDatabase() {
 }
 
 QVariantHash ServiceRoot::customDatabaseData() const {
-  return {};
+  return {{QSL("show_node_unread"), m_nodeShowUnread},
+          {QSL("show_node_important"), m_nodeShowImportant},
+          {QSL("show_node_labels"), m_nodeShowLabels},
+          {QSL("show_node_probes"), m_nodeShowProbes}};
 }
 
 void ServiceRoot::setCustomDatabaseData(const QVariantHash& data) {
-  Q_UNUSED(data)
+  m_nodeShowUnread = data.value(QSL("show_node_unread"), true).toBool();
+  m_nodeShowImportant = data.value(QSL("show_node_important"), true).toBool();
+  m_nodeShowLabels = data.value(QSL("show_node_labels"), true).toBool();
+  m_nodeShowProbes = data.value(QSL("show_node_probes"), true).toBool();
 }
 
 bool ServiceRoot::wantsBaggedIdsOfExistingMessages() const {
@@ -355,6 +456,12 @@ void ServiceRoot::requestItemReassignment(RootItem* item, RootItem* new_parent) 
   emit itemReassignmentRequested(item, new_parent);
 }
 
+void ServiceRoot::requestItemsReassignment(const QList<RootItem*>& items, RootItem* new_parent) {
+  for (RootItem* it : items) {
+    requestItemReassignment(it, new_parent);
+  }
+}
+
 void ServiceRoot::requestItemRemoval(RootItem* item) {
   emit itemRemovalRequested(item);
 }
@@ -372,7 +479,7 @@ QMap<QString, QVariantMap> ServiceRoot::storeCustomFeedsData() {
   QMap<QString, QVariantMap> custom_data;
   auto str = getSubTreeFeeds();
 
-  for (const Feed* feed : qAsConst(str)) {
+  for (const Feed* feed : std::as_const(str)) {
     QVariantMap feed_custom_data;
 
     // TODO: This could potentially call Feed::customDatabaseData() and append it
@@ -384,6 +491,16 @@ QMap<QString, QVariantMap> ServiceRoot::storeCustomFeedsData() {
     feed_custom_data.insert(QSL("is_off"), feed->isSwitchedOff());
     feed_custom_data.insert(QSL("is_quiet"), feed->isQuiet());
     feed_custom_data.insert(QSL("open_articles_directly"), feed->openArticlesDirectly());
+    feed_custom_data.insert(QSL("is_rtl"), feed->isRtl());
+
+    feed_custom_data.insert(QSL("article_limit_ignore"), QVariant::fromValue(feed->articleIgnoreLimit()));
+
+    /*
+    feed_custom_data.insert(QSL("datetime_to_avoid"),
+                            (feed->datetimeToAvoid().isValid() && feed->datetimeToAvoid().toMSecsSinceEpoch() > 0)
+                              ? feed->datetimeToAvoid().toMSecsSinceEpoch()
+                              : feed->hoursToAvoid());
+                              */
 
     // NOTE: This is here specifically to be able to restore custom sort order.
     // Otherwise the information is lost when list of feeds/folders is refreshed from remote
@@ -400,7 +517,7 @@ QMap<QString, QVariantMap> ServiceRoot::storeCustomCategoriesData() {
   QMap<QString, QVariantMap> custom_data;
   auto str = getSubTreeCategories();
 
-  for (const Category* cat : qAsConst(str)) {
+  for (const Category* cat : std::as_const(str)) {
     QVariantMap cat_custom_data;
 
     // NOTE: This is here specifically to be able to restore custom sort order.
@@ -433,6 +550,23 @@ void ServiceRoot::restoreCustomFeedsData(const QMap<QString, QVariantMap>& data,
       feed->setIsSwitchedOff(feed_custom_data.value(QSL("is_off")).toBool());
       feed->setIsQuiet(feed_custom_data.value(QSL("is_quiet")).toBool());
       feed->setOpenArticlesDirectly(feed_custom_data.value(QSL("open_articles_directly")).toBool());
+      feed->setIsRtl(feed_custom_data.value(QSL("is_rtl")).toBool());
+
+      feed
+        ->setArticleIgnoreLimit(feed_custom_data.value(QSL("article_limit_ignore")).value<Feed::ArticleIgnoreLimit>());
+
+      /*
+      feed->setAddAnyDatetimeArticles(feed_custom_data.value(QSL("add_any_datetime_articles")).toBool());
+
+      qint64 time_to_avoid = feed_custom_data.value(QSL("datetime_to_avoid")).value<qint64>();
+
+      if (time_to_avoid > 10000) {
+        feed->setDatetimeToAvoid(TextFactory::parseDateTime(time_to_avoid));
+      }
+      else {
+        feed->setHoursToAvoid(time_to_avoid);
+      }
+      */
     }
   }
 }
@@ -441,6 +575,38 @@ void ServiceRoot::restoreCustomCategoriesData(const QMap<QString, QVariantMap>& 
                                               const QHash<QString, Category*>& cats) {
   Q_UNUSED(data)
   Q_UNUSED(cats)
+}
+
+bool ServiceRoot::nodeShowProbes() const {
+  return m_nodeShowProbes;
+}
+
+void ServiceRoot::setNodeShowProbes(bool enabled) {
+  m_nodeShowProbes = enabled;
+}
+
+bool ServiceRoot::nodeShowLabels() const {
+  return m_nodeShowLabels;
+}
+
+void ServiceRoot::setNodeShowLabels(bool enabled) {
+  m_nodeShowLabels = enabled;
+}
+
+bool ServiceRoot::nodeShowImportant() const {
+  return m_nodeShowImportant;
+}
+
+void ServiceRoot::setNodeShowImportant(bool enabled) {
+  m_nodeShowImportant = enabled;
+}
+
+bool ServiceRoot::nodeShowUnread() const {
+  return m_nodeShowUnread;
+}
+
+void ServiceRoot::setNodeShowUnread(bool enabled) {
+  m_nodeShowUnread = enabled;
 }
 
 QNetworkProxy ServiceRoot::networkProxy() const {
@@ -469,6 +635,12 @@ UnreadNode* ServiceRoot::unreadNode() const {
   return m_unreadNode;
 }
 
+FormAccountDetails* ServiceRoot::accountSetupDialog() const {
+  return nullptr;
+}
+
+void ServiceRoot::onDatabaseCleanup() {}
+
 void ServiceRoot::syncIn() {
   QIcon original_icon = icon();
 
@@ -486,8 +658,7 @@ void ServiceRoot::syncIn() {
     auto categories_custom_data = storeCustomCategoriesData();
 
     // Remove from feeds model, then from SQL but leave messages intact.
-    bool uses_remote_labels =
-      (supportedLabelOperations() & LabelOperation::Synchronised) == LabelOperation::Synchronised;
+    bool uses_remote_labels = Globals::hasFlag(supportedLabelOperations(), LabelOperation::Synchronised);
 
     // Remove stuff.
     cleanAllItemsFromModel(uses_remote_labels);
@@ -513,7 +684,7 @@ void ServiceRoot::syncIn() {
 
     auto chi = new_tree->childItems();
 
-    for (RootItem* top_level_item : qAsConst(chi)) {
+    for (RootItem* top_level_item : std::as_const(chi)) {
       if (top_level_item->kind() != Kind::Labels) {
         top_level_item->setParent(nullptr);
         requestItemReassignment(top_level_item, this);
@@ -523,7 +694,7 @@ void ServiceRoot::syncIn() {
         if (labelsNode() != nullptr) {
           auto lbl_chi = top_level_item->childItems();
 
-          for (RootItem* new_lbl : qAsConst(lbl_chi)) {
+          for (RootItem* new_lbl : std::as_const(lbl_chi)) {
             new_lbl->setParent(nullptr);
             requestItemReassignment(new_lbl, labelsNode());
           }
@@ -555,10 +726,13 @@ void ServiceRoot::syncIn() {
 
 void ServiceRoot::performInitialAssembly(const Assignment& categories,
                                          const Assignment& feeds,
-                                         const QList<Label*>& labels) {
+                                         const QList<Label*>& labels,
+                                         const QList<Search*>& probes) {
   assembleCategories(categories);
   assembleFeeds(feeds);
   labelsNode()->loadLabels(labels);
+  probesNode()->loadProbes(probes);
+
   updateCounts(true);
 }
 
@@ -576,10 +750,11 @@ QStringList ServiceRoot::customIDSOfMessagesForItem(RootItem* item, ReadStatus t
 
     switch (item->kind()) {
       case RootItem::Kind::Labels:
+      case RootItem::Kind::Probes:
       case RootItem::Kind::Category: {
         auto chi = item->childItems();
 
-        for (RootItem* child : qAsConst(chi)) {
+        for (RootItem* child : std::as_const(chi)) {
           list.append(customIDSOfMessagesForItem(child, target_read));
         }
 
@@ -590,6 +765,13 @@ QStringList ServiceRoot::customIDSOfMessagesForItem(RootItem* item, ReadStatus t
         QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
 
         list = DatabaseQueries::customIdsOfMessagesFromLabel(database, item->toLabel(), target_read);
+        break;
+      }
+
+      case RootItem::Kind::Probe: {
+        QSqlDatabase database = qApp->database()->driver()->connection(metaObject()->className());
+
+        list = DatabaseQueries::customIdsOfMessagesFromProbe(database, item->toProbe(), target_read);
         break;
       }
 
@@ -726,8 +908,11 @@ bool ServiceRoot::loadMessagesForItem(RootItem* item, MessagesModel* model) {
                        .arg(QString::number(accountId())));
   }
   else if (item->kind() == RootItem::Kind::Probe) {
+    item->updateCounts(true);
+    itemChanged({item});
+
     model->setFilter(QSL("Messages.is_deleted = 0 AND Messages.is_pdeleted = 0 AND Messages.account_id = %1 AND "
-                         "Messages.contents REGEXP '%2'")
+                         "(Messages.title REGEXP '%2' OR Messages.contents REGEXP '%2')")
                        .arg(QString::number(accountId()), item->toProbe()->filter()));
   }
   else if (item->kind() == RootItem::Kind::Label) {
@@ -746,7 +931,12 @@ bool ServiceRoot::loadMessagesForItem(RootItem* item, MessagesModel* model) {
     model->setFilter(QSL("Messages.is_deleted = 0 AND Messages.is_pdeleted = 0 AND Messages.account_id = %1")
                        .arg(QString::number(accountId())));
 
-    qDebugNN << "Displaying messages from account:" << QUOTE_W_SPACE_DOT(accountId());
+    qDebugNN << LOGSEC_CORE << "Displaying messages from account:" << QUOTE_W_SPACE_DOT(accountId());
+  }
+  else if (item->kind() == RootItem::Kind::Probes) {
+    model->setFilter(QSL(DEFAULT_SQL_MESSAGES_FILTER));
+
+    qWarningNN << LOGSEC_CORE << "Showing of all regex queries combined is not supported.";
   }
   else {
     QList<Feed*> children = item->getSubTreeFeeds();
@@ -762,7 +952,7 @@ bool ServiceRoot::loadMessagesForItem(RootItem* item, MessagesModel* model) {
 
     QString urls = textualFeedUrls(children).join(QSL(", "));
 
-    qDebugNN << "Displaying messages from feeds IDs:" << QUOTE_W_SPACE(filter_clause)
+    qDebugNN << LOGSEC_CORE << "Displaying messages from feeds IDs:" << QUOTE_W_SPACE(filter_clause)
              << "and URLs:" << QUOTE_W_SPACE_DOT(urls);
   }
 
@@ -789,13 +979,14 @@ bool ServiceRoot::onAfterSetMessagesRead(RootItem* selected_item,
   Q_UNUSED(messages)
   Q_UNUSED(read)
 
-  // TODO: We know that some messages were marked as read or unread, therefore we do not need to recount
+  // We know that some messages were marked as read or unread, therefore we do not need to recount
   // all items, but only some:
   //  - recycle bin (if recycle bin IS selected)
   //  - feeds of those messages (if recycle bin is NOT selected)
   //  - important articles (if some messages IS important AND recycle bin is NOT selected)
   //  - unread articles (if some messages IS unread AND recycle bin is NOT selected)
   //  - labels assigned to articles (if recycle bin is NOT selected)
+  //  - probes (if recycle bin is NOT selected)
   QList<RootItem*> to_update;
 
   if (selected_item->kind() == RootItem::Kind::Bin) {
@@ -842,18 +1033,30 @@ bool ServiceRoot::onAfterSetMessagesRead(RootItem* selected_item,
 
     // 4. Labels assigned.
     if (labelsNode() != nullptr) {
-      auto db = qApp->database()->driver()->connection(metaObject()->className());
-      auto lbls = DatabaseQueries::getCountOfAssignedLabelsToMessages(db, messages, accountId());
+      // auto db = qApp->database()->driver()->connection(metaObject()->className());
+      QStringList lbls; // = DatabaseQueries::getCountOfAssignedLabelsToMessages(db, messages, accountId());
 
-      for (const QString& lbl_custom_id : lbls.keys()) {
-        auto* lbl = labelsNode()->labelById(lbl_custom_id);
+      for (const Message& msg : messages) {
+        for (const QString& lbl : msg.m_assignedLabelsIds) {
+          if (!lbls.contains(lbl)) {
+            lbls.append(lbl);
+          }
+        }
+      }
 
-        if (lbl != nullptr) {
-          lbl->setCountOfUnreadMessages(lbls.value(lbl_custom_id).m_unread);
-          to_update << lbl;
+      for (const QString& lbl : lbls) {
+        Label* l = labelsNode()->labelById(lbl);
+
+        if (l != nullptr) {
+          l->updateCounts(false);
+          to_update << l;
         }
       }
     }
+
+    // 5. Probes.
+    m_probesNode->updateCounts(false);
+    to_update << m_probesNode->childItems();
   }
 
   itemChanged(to_update);
@@ -1072,22 +1275,24 @@ ServiceRoot::LabelOperation operator&(ServiceRoot::LabelOperation lhs, ServiceRo
   return static_cast<ServiceRoot::LabelOperation>(static_cast<char>(lhs) & static_cast<char>(rhs));
 }
 
-QPair<int, int> ServiceRoot::updateMessages(QList<Message>& messages, Feed* feed, bool force_update, QMutex* db_mutex) {
-  QPair<int, int> updated_messages = {0, 0};
-
-  if (messages.isEmpty()) {
-    qDebugNN << "No messages to be updated/added in DB for feed" << QUOTE_W_SPACE_DOT(feed->customId());
-    return updated_messages;
-  }
-
-  bool ok = false;
+UpdatedArticles ServiceRoot::updateMessages(QList<Message>& messages, Feed* feed, bool force_update, QMutex* db_mutex) {
+  UpdatedArticles updated_messages;
   QSqlDatabase database = qApp->database()->driver()->threadSafeConnection(metaObject()->className());
 
-  qDebugNN << LOGSEC_CORE << "Updating messages in DB.";
+  if (!messages.isEmpty()) {
+    bool ok = false;
 
-  updated_messages = DatabaseQueries::updateMessages(database, messages, feed, force_update, db_mutex, &ok);
+    qDebugNN << LOGSEC_CORE << "Updating messages in DB.";
 
-  if (updated_messages.first > 0 || updated_messages.second > 0) {
+    updated_messages = DatabaseQueries::updateMessages(database, messages, feed, force_update, db_mutex, &ok);
+  }
+  else {
+    qDebugNN << "No messages to be updated/added in DB for feed" << QUOTE_W_SPACE_DOT(feed->customId());
+  }
+
+  bool anything_removed = feed->removeUnwantedArticles(database);
+
+  if (anything_removed || !updated_messages.m_unread.isEmpty() || !updated_messages.m_all.isEmpty()) {
     QMutexLocker lck(db_mutex);
 
     // Something was added or updated in the DB, update numbers.
@@ -1108,8 +1313,13 @@ QPair<int, int> ServiceRoot::updateMessages(QList<Message>& messages, Feed* feed
     if (labelsNode() != nullptr) {
       labelsNode()->updateCounts(true);
     }
+
+    if (probesNode() != nullptr) {
+      probesNode()->updateCounts(true);
+    }
   }
 
-  // NOTE: Do not update model items here. We update only once when all feeds are fetched.
+  // NOTE: Do not update model items here. We update only once when all feeds are fetched
+  // or separately in downloader, if user has this enabled.
   return updated_messages;
 }

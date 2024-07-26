@@ -6,6 +6,7 @@
 #include "miscellaneous/application.h"
 
 #include <QDir>
+#include <QSqlDriver>
 #include <QSqlError>
 #include <QSqlQuery>
 
@@ -37,60 +38,80 @@ QString SqliteDriver::ddlFilePrefix() const {
   return QSL("sqlite");
 }
 
+int SqliteDriver::loadOrSaveDbInMemoryDb(sqlite3* in_memory_db, const char* db_filename, bool save) {
+  int rc;                   /* Function return code */
+  sqlite3* p_file;          /* Database connection opened on zFilename */
+  sqlite3_backup* p_backup; /* Backup object used to copy data */
+  sqlite3* p_to;            /* Database to copy to (pFile or pInMemory) */
+  sqlite3* p_from;          /* Database to copy from (pFile or pInMemory) */
+
+  /* Open the database file identified by zFilename. Exit early if this fails
+  ** for any reason. */
+  rc = sqlite3_open(db_filename, &p_file);
+
+  if (rc == SQLITE_OK) {
+    /* If this is a 'load' operation (isSave==0), then data is copied
+    ** from the database file just opened to database pInMemory.
+    ** Otherwise, if this is a 'save' operation (isSave==1), then data
+    ** is copied from pInMemory to pFile.  Set the variables pFrom and
+    ** pTo accordingly. */
+    p_from = (save ? in_memory_db : p_file);
+    p_to = (save ? p_file : in_memory_db);
+
+    /* Set up the backup procedure to copy from the "main" database of
+    ** connection pFile to the main database of connection pInMemory.
+    ** If something goes wrong, pBackup will be set to NULL and an error
+    ** code and message left in connection pTo.
+    **
+    ** If the backup object is successfully created, call backup_step()
+    ** to copy data from pFile to pInMemory. Then call backup_finish()
+    ** to release resources associated with the pBackup object.  If an
+    ** error occurred, then an error code and message will be left in
+    ** connection pTo. If no error occurred, then the error code belonging
+    ** to pTo is set to SQLITE_OK.
+    */
+    p_backup = sqlite3_backup_init(p_to, "main", p_from, "main");
+    if (p_backup) {
+      (void)sqlite3_backup_step(p_backup, -1);
+      (void)sqlite3_backup_finish(p_backup);
+    }
+    rc = sqlite3_errcode(p_to);
+  }
+
+  sqlite3_db_cacheflush(p_file);
+
+  /* Close the database connection opened on database file zFilename
+  ** and return the result of this function. */
+  (void)sqlite3_close(p_file);
+  return rc;
+}
+
 bool SqliteDriver::saveDatabase() {
   if (!m_inMemoryDatabase) {
     return true;
   }
-
-  qDebugNN << LOGSEC_DB << "Saving in-memory working database back to persistent file-based storage.";
-
-  QSqlDatabase database = connection(QSL("SaveFromMemory"), DatabaseDriver::DesiredStorageType::StrictlyInMemory);
-  QSqlDatabase file_database = connection(QSL("SaveToFile"), DatabaseDriver::DesiredStorageType::StrictlyFileBased);
-  QSqlQuery copy_contents(database);
-
-  // Attach database.
-  copy_contents.exec(QString(QSL("ATTACH DATABASE '%1' AS 'storage';")).arg(file_database.databaseName()));
-
-  // Copy all stuff.
-  QStringList tables;
-
-  if (copy_contents.exec(QSL("SELECT name FROM storage.sqlite_master WHERE type='table';"))) {
-    while (copy_contents.next()) {
-      tables.append(copy_contents.value(0).toString());
-    }
-  }
   else {
-    qFatal("Cannot obtain list of table names from file-base SQLite database.");
-  }
+    qDebugNN << LOGSEC_DB << "Saving in-memory working database back to persistent file-based storage.";
 
-  for (const QString& table : tables) {
-    if (copy_contents.exec(QString(QSL("DELETE FROM storage.%1;")).arg(table))) {
-      qDebugNN << LOGSEC_DB << "Cleaning old data from 'storage." << table << "'.";
-    }
-    else {
-      qCriticalNN << LOGSEC_DB << "Failed to clean old data from 'storage." << table << "', error: '"
-                  << copy_contents.lastError().text() << "'.";
+    QSqlDatabase database = connection(QSL("SaveFromMemory"), DatabaseDriver::DesiredStorageType::StrictlyInMemory);
+    const QDir db_path(m_databaseFilePath);
+    QFile db_file(db_path.absoluteFilePath(QSL(APP_DB_SQLITE_FILE)));
+    QVariant v = database.driver()->handle();
+
+    if (v.isValid() && (qstrcmp(v.typeName(), "sqlite3*") == 0)) {
+      // v.data() returns a pointer to the handle
+      sqlite3* handle = *static_cast<sqlite3**>(v.data());
+
+      if (handle != nullptr) {
+        loadOrSaveDbInMemoryDb(handle, QDir::toNativeSeparators(db_file.fileName()).toStdString().c_str(), 1);
+      }
+      else {
+        throw ApplicationException(tr("cannot get native 'sqlite3' DB handle"));
+      }
     }
 
-    if (copy_contents.exec(QString(QSL("INSERT INTO storage.%1 SELECT * FROM main.%1;")).arg(table))) {
-      qDebugNN << LOGSEC_DB << "Copying new data into 'main." << table << "'.";
-    }
-    else {
-      qCriticalNN << LOGSEC_DB << "Failed to copy new data to 'main." << table << "', error: '"
-                  << copy_contents.lastError().text() << "'.";
-    }
+    return true;
   }
-
-  // Detach database and finish.
-  if (copy_contents.exec(QSL("DETACH 'storage'"))) {
-    qDebugNN << LOGSEC_DB << "Detaching persistent SQLite file.";
-  }
-  else {
-    qCriticalNN << LOGSEC_DB << "Failed to detach SQLite file, error: '" << copy_contents.lastError().text() << "'.";
-  }
-
-  copy_contents.finish();
-  return true;
 }
 
 QSqlDatabase SqliteDriver::connection(const QString& connection_name, DesiredStorageType desired_type) {
@@ -304,6 +325,9 @@ QSqlDatabase SqliteDriver::initializeDatabase(const QString& connection_name, bo
 
     // Detach database and finish.
     copy_contents.exec(QSL("DETACH 'storage'"));
+
+    file_database.close();
+    QSqlDatabase::removeDatabase(file_database.connectionName());
   }
 
   // Everything is initialized now.
@@ -323,13 +347,13 @@ QString SqliteDriver::databaseFilePath() const {
 
 void SqliteDriver::setPragmas(QSqlQuery& query) {
   query.exec(QSL("PRAGMA encoding = \"UTF-8\""));
-  query.exec(QSL("PRAGMA synchronous = OFF"));
-  // query.exec(QSL("PRAGMA journal_mode = MEMORY"));
-  query.exec(QSL("PRAGMA page_size = 4096"));
-  query.exec(QSL("PRAGMA cache_size = 16384"));
+  query.exec(QSL("PRAGMA page_size = 32768"));
+  query.exec(QSL("PRAGMA cache_size = 32768"));
+  query.exec(QSL("PRAGMA mmap_size = 100000000"));
   query.exec(QSL("PRAGMA count_changes = OFF"));
   query.exec(QSL("PRAGMA temp_store = MEMORY"));
-  query.exec(QSL("PRAGMA journal_mode = WAL"));
+  query.exec(QSL("PRAGMA synchronous = OFF"));
+  query.exec(QSL("PRAGMA journal_mode = MEMORY"));
 }
 
 qint64 SqliteDriver::databaseDataSize() {
@@ -365,6 +389,10 @@ QString SqliteDriver::qtDriverCode() const {
 }
 
 void SqliteDriver::backupDatabase(const QString& backup_folder, const QString& backup_name) {
+  qDebugNN << LOGSEC_DB << "Creating SQLite DB backup.";
+
+  saveDatabase();
+
   if (!IOFactory::copyFile(databaseFilePath(),
                            backup_folder + QDir::separator() + backup_name + BACKUP_SUFFIX_DATABASE)) {
     throw ApplicationException(tr("Database file not copied to output directory successfully."));

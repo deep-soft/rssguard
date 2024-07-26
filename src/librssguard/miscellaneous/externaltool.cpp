@@ -5,10 +5,12 @@
 #include "definitions/definitions.h"
 #include "exceptions/applicationexception.h"
 #include "miscellaneous/application.h"
+#include "miscellaneous/settings.h"
+
+#include <utility>
 
 #include <QDir>
 #include <QObject>
-#include <utility>
 
 void ExternalTool::sanitizeParameters() {
   m_executable = QDir::toNativeSeparators(m_executable);
@@ -81,7 +83,7 @@ bool ExternalTool::run(const QString& target) {
       pars = pars.replace(QSL("%1"), target);
     }
     else {
-      pars += QSL(" \"%1\"").arg(target);
+      pars += QSL(" '%1'").arg(target);
     }
 
     auto params = TextFactory::tokenizeProcessArguments(pars);

@@ -3,21 +3,23 @@
 #ifndef FORMSETTINGS_H
 #define FORMSETTINGS_H
 
-#include <QDialog>
-
 #include "ui_formsettings.h"
+
+#include <QDialog>
 
 class Settings;
 class SettingsPanel;
 
 class FormSettings : public QDialog {
-  Q_OBJECT
+    Q_OBJECT
 
   public:
-
     // Constructors and destructors.
     explicit FormSettings(QWidget& parent);
     virtual ~FormSettings();
+
+  public slots:
+    void reject();
 
   private slots:
     void openSettingsCategory(int category);

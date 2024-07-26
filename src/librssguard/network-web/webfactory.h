@@ -3,16 +3,14 @@
 #ifndef WEBFACTORY_H
 #define WEBFACTORY_H
 
-#include <QObject>
-
 #include "core/message.h"
 
 #include <QMap>
+#include <QObject>
 
-#if defined(USE_WEBENGINE)
-#include <QWebEngineProfile>
-#include <QWebEngineSettings>
-
+#if defined(NO_LITE)
+class QWebEngineProfile;
+class QWebEngineSettings;
 class QAction;
 class NetworkUrlInterceptor;
 #endif
@@ -20,9 +18,11 @@ class NetworkUrlInterceptor;
 class QMenu;
 class AdBlockManager;
 class CookieJar;
+class ApiServer;
 class Readability;
+class ArticleParse;
 
-class WebFactory : public QObject {
+class RSSGUARD_DLLSPEC WebFactory : public QObject {
     Q_OBJECT
 
   public:
@@ -36,13 +36,14 @@ class WebFactory : public QObject {
     // converts both HTML entity names and numbers to UTF-8 string.
     // Example of entities are:
     //   ∀ = &forall; (entity name), &#8704; (base-10 entity), &#x2200; (base-16 entity)
-    QString unescapeHtml(const QString& html);
+    static QString unescapeHtml(const QString& html);
 
+    QString limitSizeOfHtmlImages(const QString& html, int desired_width, int images_max_height) const;
     QString processFeedUriScheme(const QString& url);
 
     AdBlockManager* adBlock() const;
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     QAction* engineSettingsAction();
     NetworkUrlInterceptor* urlIinterceptor() const;
     QWebEngineProfile* engineProfile() const;
@@ -50,43 +51,53 @@ class WebFactory : public QObject {
 
     CookieJar* cookieJar() const;
     Readability* readability() const;
+    ArticleParse* articleParse() const;
+
+    void startApiServer();
+    void stopApiServer();
 
     void updateProxy();
-    bool openUrlInExternalBrowser(const QString& url) const;
     bool sendMessageViaEmail(const Message& message);
+
+#if defined(NO_LITE)
+    void loadCustomCss(const QString user_styles_path);
+#endif
 
     QString customUserAgent() const;
     void setCustomUserAgent(const QString& user_agent);
 
   public slots:
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     void cleanupCache();
 #endif
 
-#if defined(USE_WEBENGINE)
+    bool openUrlInExternalBrowser(const QUrl& url) const;
+
+#if defined(NO_LITE)
   private slots:
     void createMenu(QMenu* menu = nullptr);
     void webEngineSettingChanged(bool enabled);
 
   private:
-    QAction* createEngineSettingsAction(const QString& title, QWebEngineSettings::WebAttribute attribute);
+    QAction* createEngineSettingsAction(const QString& title, int web_attribute);
 #endif
 
   private:
-    void generateUnescapes();
+    static QMap<QString, char16_t> generateUnescapes();
 
   private:
     AdBlockManager* m_adBlock;
 
-#if defined(USE_WEBENGINE)
+#if defined(NO_LITE)
     QWebEngineProfile* m_engineProfile;
     NetworkUrlInterceptor* m_urlInterceptor;
     QAction* m_engineSettings;
 #endif
 
+    ApiServer* m_apiServer;
     CookieJar* m_cookieJar;
     Readability* m_readability;
-    QMap<QString, char16_t> m_htmlNamedEntities;
+    ArticleParse* m_articleParse;
     QString m_customUserAgent;
 };
 

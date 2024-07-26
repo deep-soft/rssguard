@@ -109,7 +109,7 @@
        <item row="2" column="1">
         <widget class="QCheckBox" name="m_checkForceAlternativePalette">
          <property name="text">
-          <string>Use skin colors</string>
+          <string>Use skin colors (skin colors for dialogs/controls only take effect with Fusion style)</string>
          </property>
         </widget>
        </item>
@@ -126,7 +126,7 @@
        <item row="2" column="0">
         <widget class="QGroupBox" name="m_gbCustomSkinColors">
          <property name="title">
-          <string>Force custom skin colors</string>
+          <string>Customize predefined colors</string>
          </property>
          <property name="checkable">
           <bool>true</bool>
